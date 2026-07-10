@@ -1,0 +1,28 @@
+# Build outputs
+/bin/
+/growcore/growcore
+/growcore/growcore-bin
+
+# SQLite databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Embedded web build — populated by `make build`, only the placeholder is tracked
+/growcore/internal/webui/dist/*
+!/growcore/internal/webui/dist/.gitkeep
+
+# Node / SvelteKit
+node_modules/
+/web/.svelte-kit/
+/web/build/
+
+# Environment files (secrets); keep the example
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.claude

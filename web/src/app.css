@@ -1,0 +1,25 @@
+@import 'tailwindcss';
+
+/* GrowRig design tokens — a calm, grow-oriented dark palette. */
+@theme {
+	--color-rig-50: #f2f8f2;
+	--color-rig-100: #dce9dd;
+	--color-rig-200: #b6cdb8;
+	--color-rig-300: #86ab8a;
+	--color-rig-400: #56855c;
+	--color-rig-500: #38a169; /* grow green accent */
+	--color-rig-600: #2f8659;
+	--color-rig-700: #285c3f;
+	--color-rig-800: #17281d;
+	--color-rig-900: #101a13;
+	--color-rig-950: #0b0f0c;
+
+	--color-leaf: #4ade80;
+	--color-warn: #f59e0b;
+	--color-danger: #ef4444;
+}
+
+html,
+body {
+	min-height: 100%;
+}

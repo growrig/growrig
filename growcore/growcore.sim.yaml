@@ -1,0 +1,20 @@
+# Grow Core — OFFLINE simulator (no Home Assistant, no hardware).
+#
+# Runs the built-in simulator so you can exercise the whole platform locally:
+#
+#   go run ./cmd/growcore -config growcore.sim.yaml
+#
+# On first run Grow Core auto-provisions a virtual controller. Running with no
+# config file at all uses these same simulator defaults.
+
+server:
+  addr: ":8080"
+
+storage:
+  path: growcore.sim.db
+
+control:
+  interval: 2s
+
+adapter:
+  type: simulator

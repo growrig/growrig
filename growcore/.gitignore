@@ -1,0 +1,9 @@
+# Build output
+/growcore
+/growcore-bin
+
+# SQLite databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

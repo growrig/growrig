@@ -1,0 +1,1 @@
+GrowRig web UI is not embedded in this build. Run `make build` from the repo root to embed it, or use the SvelteKit dev server.

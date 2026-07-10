@@ -1,0 +1,26 @@
+# Grow Core — LOCAL DEVELOPMENT against a remote Home Assistant instance.
+#
+# Create a long-lived access token in Home Assistant
+# (Profile → Security → Long-lived access tokens), then export it and run:
+#
+#   export GROWCORE_HA_TOKEN=eyJhbGciOi...
+#   go run ./cmd/growcore -config growcore.dev.yaml
+#
+# Point `url` at your Home Assistant (mDNS name, IP, or Nabu Casa URL). Add and
+# map devices to Home Assistant entities in the web UI (Setup) — not here.
+
+server:
+  addr: ":8080"
+
+storage:
+  path: growcore.dev.db
+
+control:
+  interval: 2s
+
+adapter:
+  type: homeassistant
+
+homeassistant:
+  url: http://homeassistant.local:8123
+  token: ${GROWCORE_HA_TOKEN}

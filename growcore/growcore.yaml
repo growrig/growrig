@@ -1,0 +1,26 @@
+# Grow Core — DEFAULT deployment: Home Assistant OS add-on.
+#
+# Running inside HAOS, Grow Core reaches Home Assistant through the Supervisor
+# proxy and authenticates with the add-on's Supervisor token. The add-on
+# manifest must request `homeassistant_api: true`.
+#
+# This file is infrastructure only. Environments, devices, channel roles and
+# Home Assistant entity bindings are owned by Grow Core and stored in its
+# database — add and map them in the web UI (Setup), not here.
+
+server:
+  addr: ":8080"
+
+storage:
+  # HAOS add-ons get a persistent /data directory.
+  path: /data/growcore.db
+
+control:
+  interval: 2s
+
+adapter:
+  type: homeassistant
+
+homeassistant:
+  url: http://supervisor/core
+  token: ${SUPERVISOR_TOKEN}
