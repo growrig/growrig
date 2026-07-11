@@ -88,7 +88,8 @@
 					targetTempC: 22,
 					targetHumidity: 50,
 					targetCO2: 0,
-					emergencyTempC: 35
+					emergencyTempC: 35,
+					leafTempOffsetC: -2
 				});
 				airSourceId = room.id;
 			} else if (airMode === 'link') {
@@ -106,7 +107,8 @@
 				targetTempC,
 				targetHumidity,
 				targetCO2,
-				emergencyTempC
+				emergencyTempC,
+				leafTempOffsetC: -2
 			});
 
 			for (const d of devices) {

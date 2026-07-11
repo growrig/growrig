@@ -41,6 +41,17 @@ export interface BindingTemplate {
 	entityDomain: string;
 	deviceClass?: string;
 	wattage?: number;
+	rpmEntityDomain?: string;
+}
+
+export interface FanPreset {
+	id: string;
+	label: string;
+	sizeMm?: number;
+	maxRpm?: number;
+	airflowCfm?: number;
+	staticPressureMmH2O?: number;
+	startingVoltage?: number;
 }
 
 export interface CatalogProduct {
@@ -55,6 +66,8 @@ export interface CatalogProduct {
 	haIntegration?: string;
 	documentation?: string;
 	provides?: BindingTemplate[];
+	maxChannels?: number;
+	fanPresets?: FanPreset[];
 }
 
 export interface Location {
@@ -91,6 +104,7 @@ export interface Environment {
 	targetHumidity: number;
 	targetCO2: number;
 	emergencyTempC: number;
+	leafTempOffsetC: number;
 }
 
 export interface Binding {
@@ -106,6 +120,11 @@ export interface Binding {
 	measurement?: Measurement;
 	role?: Role;
 	rpmEntity?: string;
+	sizeMm?: number;
+	maxRpm?: number;
+	airflowCfm?: number;
+	staticPressureMmH2O?: number;
+	startingVoltage?: number;
 	wattage?: number;
 	primary?: boolean;
 }
@@ -121,6 +140,7 @@ export interface DiscoveredEntity {
 	entityCategory?: string;
 	manufacturer?: string;
 	model?: string;
+	unit?: string;
 }
 
 export interface SensorReading {
@@ -140,6 +160,7 @@ export interface ControlState {
 	entity: string;
 	desiredSpeed: number;
 	rpm: number;
+	maxRpm?: number;
 	on: boolean;
 	wattage?: number;
 	power?: number; // lights: actual measured watts (from plug meter), else rated while on

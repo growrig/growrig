@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Dialog } from '$lib/components/ui';
 	import MetricChart, { type ChartLine } from '$lib/components/MetricChart.svelte';
+	import VpdChart from '$lib/components/VpdChart.svelte';
 	import { deviceHistory, historyRange, sensorHistory, weatherHistory } from '$lib/api';
 	import type {
 		ControlState,
@@ -11,6 +12,7 @@
 		SensorSeries,
 		WeatherHistory
 	} from '$lib/types';
+	import CloudSun from '@lucide/svelte/icons/cloud-sun';
 
 	export type MetricDescriptor =
 		| { kind: 'sensor'; measurement: Measurement }
@@ -39,17 +41,34 @@
 		/** Live controls (device current value). */
 		controls?: ControlState[];
 		vpdCurrent?: number | null;
+		vpdTempC?: number | null;
+		vpdHumidity?: number | null;
+		vpdLeafTempOffsetC?: number;
 	}
-	let { open = $bindable(false), envId, title, unit, descriptor, sensors = [], controls = [], vpdCurrent = null }: Props =
+	let { open = $bindable(false), envId, title, unit, descriptor, sensors = [], controls = [], vpdCurrent = null, vpdTempC = null, vpdHumidity = null, vpdLeafTempOffsetC = -2 }: Props =
 		$props();
 
 	const timeframes = [
+		{ label: '15m', hours: 0.25 },
+		{ label: '1h', hours: 1 },
+		{ label: '3h', hours: 3 },
+		{ label: '12h', hours: 12 },
 		{ label: '24h', hours: 24 },
 		{ label: '3d', hours: 72 },
 		{ label: '7d', hours: 168 },
 		{ label: '30d', hours: 720 }
 	];
 	let hours = $state(72);
+	let showForecast = $state(true);
+	let vpdPanel = $state<'guide' | 'history'>('guide');
+	let wasOpen = false;
+	$effect(() => {
+		if (open && !wasOpen) {
+			showForecast = true;
+			if (descriptor.kind === 'vpd') vpdPanel = 'guide';
+		}
+		wasOpen = open;
+	});
 
 	const sourcePalette = ['#f97316', '#38bdf8', '#a78bfa', '#4ade80', '#f472b6', '#facc15', '#2dd4bf'];
 	const avgColor = '#e5e7eb'; // near-white, dashed — the controlled average
@@ -106,8 +125,12 @@
 
 	const aggField = (m: Measurement): keyof Reading =>
 		m === 'temperature' ? 'tempC' : m === 'humidity' ? 'humidity' : 'co2';
-	const outdoorPts = (m: Measurement) =>
-		m === 'temperature' ? weatherData.temp : m === 'humidity' ? weatherData.humidity : [];
+	const outdoorPts = (m: Measurement) => {
+		const points = m === 'temperature' ? weatherData.temp : m === 'humidity' ? weatherData.humidity : [];
+		const futureLimit = Date.now() + (showForecast ? hours / 6 : 0) * 60 * 60 * 1000;
+		return points.filter((point) => new Date(point.time).getTime() <= futureLimit);
+	};
+	const supportsForecast = $derived(descriptor.kind === 'sensor' && (descriptor.measurement === 'temperature' || descriptor.measurement === 'humidity'));
 
 	// Chart lines + the source list share the same set, so build both together.
 	const built = $derived.by<{ lines: ChartLine[]; items: MetricListItem[] }>(() => {
@@ -159,7 +182,7 @@
 		} else if (descriptor.kind === 'vpd') {
 			const points = aggData.map((r) => ({ t: new Date(r.time).getTime(), value: r.vpd }));
 			lines.push({ id: 'vpd', name: 'VPD', color: '#4ade80', points });
-			items.push({ id: 'vpd', name: 'VPD (derived)', entity: '', color: '#4ade80', current: vpdCurrent, ok: vpdCurrent != null });
+			items.push({ id: 'vpd', name: `${vpdLeafTempOffsetC === 0 ? 'Air' : 'Leaf'} VPD (derived)`, entity: '', color: '#4ade80', current: vpdCurrent, ok: vpdCurrent != null });
 		} else {
 			const ds = deviceData.find((d) => d.bindingId === descriptor.bindingId);
 			const ctrl = controls.find((c) => c.id === descriptor.bindingId);
@@ -184,7 +207,7 @@
 		return { lines, items };
 	});
 
-	const note = $derived(descriptor.kind === 'vpd' ? 'Derived from temperature & humidity — not a direct sensor reading.' : undefined);
+	const note = $derived(descriptor.kind === 'vpd' ? (vpdLeafTempOffsetC === 0 ? 'Air VPD derived from air temperature & humidity — no leaf-temperature correction.' : `Leaf VPD derived using a ${vpdLeafTempOffsetC > 0 ? '+' : ''}${vpdLeafTempOffsetC}°C leaf-temperature offset.`) : undefined);
 	const hasHistory = $derived(built.lines.some((l) => l.points.length > 1));
 	const decs = $derived(unit === 'kPa' ? 2 : unit === '°C' ? 1 : 0);
 	const fmt = (v: number | null) => (v == null ? '—' : `${v.toFixed(decs)}${unit ? ' ' + unit : ''}`);
@@ -192,6 +215,16 @@
 
 <Dialog bind:open {title} description={note} size="2xl">
 	<div class="space-y-4">
+		{#if descriptor.kind === 'vpd'}
+			<div class="flex w-fit rounded-lg border border-rig-800 bg-rig-950/60 p-1" aria-label="VPD view">
+				<button type="button" onclick={() => (vpdPanel = 'guide')} class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {vpdPanel === 'guide' ? 'bg-rig-700 text-rig-50 shadow-sm' : 'text-rig-400 hover:text-rig-100'}">Guide</button>
+				<button type="button" onclick={() => (vpdPanel = 'history')} class="rounded-md px-3 py-1.5 text-xs font-medium transition-colors {vpdPanel === 'history' ? 'bg-rig-700 text-rig-50 shadow-sm' : 'text-rig-400 hover:text-rig-100'}">History</button>
+			</div>
+		{/if}
+
+		{#if descriptor.kind === 'vpd' && vpdPanel === 'guide'}
+			<VpdChart tempC={vpdTempC} humidity={vpdHumidity} vpd={vpdCurrent} leafTempOffsetC={vpdLeafTempOffsetC} />
+		{:else}
 		<!-- timeframe selector -->
 		<div class="flex items-center justify-end gap-1">
 			{#each timeframes as tf (tf.hours)}
@@ -205,6 +238,18 @@
 					{tf.label}
 				</button>
 			{/each}
+			{#if supportsForecast}
+				<span class="mx-1 h-4 w-px bg-rig-800"></span>
+				<button
+					type="button"
+					onclick={() => (showForecast = !showForecast)}
+					class="rounded-md p-1.5 transition-colors {showForecast ? 'bg-rig-700 text-leaf' : 'text-rig-500 hover:bg-rig-800 hover:text-rig-100'}"
+					aria-label={showForecast ? 'Hide outdoor forecast' : 'Show outdoor forecast'}
+					title={showForecast ? 'Outdoor forecast on · future uses ⅙ of the selected window' : 'Outdoor forecast off'}
+				>
+					<CloudSun size={15} />
+				</button>
+			{/if}
 		</div>
 
 		{#if hasHistory}
@@ -213,6 +258,7 @@
 			<div class="flex h-40 items-center justify-center rounded-lg border border-dashed border-rig-800 text-center text-sm text-rig-500">
 				{loading ? 'Loading…' : 'Not enough history for this window yet — collecting readings…'}
 			</div>
+		{/if}
 		{/if}
 
 		<ul class="space-y-1.5">
@@ -225,7 +271,6 @@
 						></span>
 						<div class="min-w-0">
 							<div class="truncate text-sm text-rig-100">{s.name}{#if s.sub}<span class="text-rig-500"> · {s.sub}</span>{/if}</div>
-							{#if s.entity}<div class="truncate font-mono text-xs text-rig-500">{s.entity}</div>{/if}
 						</div>
 					</div>
 					<div class="flex items-center gap-2 whitespace-nowrap">

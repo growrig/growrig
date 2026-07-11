@@ -71,15 +71,20 @@ type deviceDocument struct {
 }
 
 type capabilityDocument struct {
-	ID          string             `yaml:"id"`
-	Kind        domain.BindingKind `yaml:"kind"`
-	Name        string             `yaml:"name"`
-	Entity      string             `yaml:"entity,omitempty"`
-	Measurement domain.Measurement `yaml:"measurement,omitempty"`
-	Role        domain.Role        `yaml:"role,omitempty"`
-	RPMEntity   string             `yaml:"rpmEntity,omitempty"`
-	Wattage     float64            `yaml:"wattage,omitempty"`
-	Primary     bool               `yaml:"primary,omitempty"`
+	ID                  string             `yaml:"id"`
+	Kind                domain.BindingKind `yaml:"kind"`
+	Name                string             `yaml:"name"`
+	Entity              string             `yaml:"entity,omitempty"`
+	Measurement         domain.Measurement `yaml:"measurement,omitempty"`
+	Role                domain.Role        `yaml:"role,omitempty"`
+	RPMEntity           string             `yaml:"rpmEntity,omitempty"`
+	SizeMM              int                `yaml:"sizeMm,omitempty"`
+	MaxRPM              int                `yaml:"maxRpm,omitempty"`
+	AirflowCFM          float64            `yaml:"airflowCfm,omitempty"`
+	StaticPressureMMH2O float64            `yaml:"staticPressureMmH2O,omitempty"`
+	StartingVoltage     float64            `yaml:"startingVoltage,omitempty"`
+	Wattage             float64            `yaml:"wattage,omitempty"`
+	Primary             bool               `yaml:"primary,omitempty"`
 }
 
 func (s *Store) syncYAMLConfig() error {
@@ -134,7 +139,7 @@ func (s *Store) syncYAMLConfig() error {
 					ID: cap.ID, DeviceID: dev.ID, DeviceName: dev.Name,
 					PowerControllerID: dev.PowerControllerID, ControllerChannelID: dev.ControllerChannelID,
 					EnvironmentID: doc.ID, Kind: cap.Kind, Name: cap.Name, Entity: cap.Entity,
-					Measurement: cap.Measurement, Role: cap.Role, RPMEntity: cap.RPMEntity,
+					Measurement: cap.Measurement, Role: cap.Role, RPMEntity: cap.RPMEntity, SizeMM: cap.SizeMM, MaxRPM: cap.MaxRPM, AirflowCFM: cap.AirflowCFM, StaticPressureMMH2O: cap.StaticPressureMMH2O, StartingVoltage: cap.StartingVoltage,
 					Wattage: cap.Wattage, Primary: cap.Primary,
 				}
 				if err := s.SaveBinding(b); err != nil {
@@ -186,7 +191,7 @@ func (s *Store) writeEnvironmentConfig(envID string) error {
 		}
 		dev.Capabilities = append(dev.Capabilities, capabilityDocument{
 			ID: b.ID, Kind: b.Kind, Name: b.Name, Entity: b.Entity,
-			Measurement: b.Measurement, Role: b.Role, RPMEntity: b.RPMEntity,
+			Measurement: b.Measurement, Role: b.Role, RPMEntity: b.RPMEntity, SizeMM: b.SizeMM, MaxRPM: b.MaxRPM, AirflowCFM: b.AirflowCFM, StaticPressureMMH2O: b.StaticPressureMMH2O, StartingVoltage: b.StartingVoltage,
 			Wattage: b.Wattage, Primary: b.Primary,
 		})
 	}

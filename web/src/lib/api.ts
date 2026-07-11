@@ -87,6 +87,7 @@ export interface EnvironmentInput {
 	targetHumidity: number;
 	targetCO2: number;
 	emergencyTempC: number;
+	leafTempOffsetC: number;
 }
 
 export const createEnvironment = (env: EnvironmentInput) =>
@@ -153,6 +154,11 @@ export interface BindingInput {
 	measurement?: Measurement;
 	role?: Role;
 	rpmEntity?: string;
+	sizeMm?: number;
+	maxRpm?: number;
+	airflowCfm?: number;
+	staticPressureMmH2O?: number;
+	startingVoltage?: number;
 	wattage?: number;
 	primary?: boolean;
 }

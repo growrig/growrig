@@ -20,6 +20,7 @@ type DiscoveredEntity struct {
 	EntityCategory string             `json:"entityCategory,omitempty"`
 	Manufacturer   string             `json:"manufacturer,omitempty"`
 	Model          string             `json:"model,omitempty"`
+	Unit           string             `json:"unit,omitempty"`
 }
 
 // Adapter is the boundary between the control engine and the physical world.

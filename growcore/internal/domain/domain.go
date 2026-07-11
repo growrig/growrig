@@ -102,6 +102,9 @@ type Environment struct {
 	TargetHumidity float64 `json:"targetHumidity" yaml:"targetHumidity"`
 	TargetCO2      float64 `json:"targetCO2" yaml:"targetCO2,omitempty"` // ppm; 0 = unset
 	EmergencyTempC float64 `json:"emergencyTempC" yaml:"emergencyTempC"`
+	// LeafTempOffsetC estimates leaf temperature from air temperature for VPD.
+	// For example, -2 means leaves are assumed to be 2°C cooler than the air.
+	LeafTempOffsetC float64 `json:"leafTempOffsetC" yaml:"leafTempOffsetC,omitempty"`
 }
 
 // VolumeM3 returns the tent's air volume in cubic metres, or 0 if any
@@ -328,8 +331,13 @@ type Binding struct {
 	// Sensor only:
 	Measurement Measurement `json:"measurement,omitempty"`
 	// Fan/controller only:
-	Role      Role   `json:"role,omitempty"`
-	RPMEntity string `json:"rpmEntity,omitempty"`
+	Role                Role    `json:"role,omitempty"`
+	RPMEntity           string  `json:"rpmEntity,omitempty"`
+	SizeMM              int     `json:"sizeMm,omitempty"`
+	MaxRPM              int     `json:"maxRpm,omitempty"`
+	AirflowCFM          float64 `json:"airflowCfm,omitempty"`
+	StaticPressureMMH2O float64 `json:"staticPressureMmH2O,omitempty"`
+	StartingVoltage     float64 `json:"startingVoltage,omitempty"`
 	// Light only:
 	Wattage float64 `json:"wattage,omitempty"` // rated power in watts; 0 = unknown
 	Primary bool    `json:"primary,omitempty"` // the box's main grow light (one per env)
@@ -440,6 +448,7 @@ type ControlState struct {
 	Entity       string      `json:"entity"`
 	DesiredSpeed int         `json:"desiredSpeed"`      // fans
 	RPM          int         `json:"rpm"`               // fans
+	MaxRPM       int         `json:"maxRpm,omitempty"`  // fans: configured full-speed RPM
 	On           bool        `json:"on"`                // lights
 	Wattage      float64     `json:"wattage,omitempty"` // lights: rated power (W)
 	Power        float64     `json:"power,omitempty"`   // lights: actual measured power (W) from the plug meter, else rated while on

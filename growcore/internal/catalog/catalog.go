@@ -61,6 +61,19 @@ type BindingTemplate struct {
 	// Wattage is a light's rated power in watts; 0 means the grower specifies it
 	// (e.g. a generic grow light).
 	Wattage float64 `json:"wattage,omitempty" yaml:"wattage,omitempty"`
+	// RPMEntityDomain requests a separate tachometer entity for this controller channel.
+	RPMEntityDomain string `json:"rpmEntityDomain,omitempty" yaml:"rpmEntityDomain,omitempty"`
+}
+
+// FanPreset is an optional known set of physical specifications for a generic fan.
+type FanPreset struct {
+	ID                  string  `json:"id" yaml:"id"`
+	Label               string  `json:"label" yaml:"label"`
+	SizeMM              int     `json:"sizeMm,omitempty" yaml:"sizeMm,omitempty"`
+	MaxRPM              int     `json:"maxRpm,omitempty" yaml:"maxRpm,omitempty"`
+	AirflowCFM          float64 `json:"airflowCfm,omitempty" yaml:"airflowCfm,omitempty"`
+	StaticPressureMMH2O float64 `json:"staticPressureMmH2O,omitempty" yaml:"staticPressureMmH2O,omitempty"`
+	StartingVoltage     float64 `json:"startingVoltage,omitempty" yaml:"startingVoltage,omitempty"`
 }
 
 // Product is a catalog entry.
@@ -76,6 +89,8 @@ type Product struct {
 	HAIntegration string            `json:"haIntegration,omitempty"`
 	Documentation string            `json:"documentation,omitempty"`
 	Provides      []BindingTemplate `json:"provides,omitempty"`
+	MaxChannels   int               `json:"maxChannels,omitempty"`
+	FanPresets    []FanPreset       `json:"fanPresets,omitempty"`
 }
 
 // deviceFile is the on-disk YAML schema for a single device. Category and id
@@ -90,6 +105,8 @@ type deviceFile struct {
 	HAIntegration string            `yaml:"haIntegration"`
 	Documentation string            `yaml:"documentation"`
 	Provides      []BindingTemplate `yaml:"provides"`
+	MaxChannels   int               `yaml:"maxChannels"`
+	FanPresets    []FanPreset       `yaml:"fanPresets"`
 }
 
 // data holds the catalog tree synced from repo-root devices/ by `make build`.
@@ -235,6 +252,8 @@ func loadTree(fsys fs.FS) ([]Product, error) {
 				HAIntegration: df.HAIntegration,
 				Documentation: df.Documentation,
 				Provides:      df.Provides,
+				MaxChannels:   df.MaxChannels,
+				FanPresets:    df.FanPresets,
 			})
 		}
 	}

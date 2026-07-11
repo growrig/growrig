@@ -42,9 +42,15 @@
 	let measurement = $state<Measurement>('temperature');
 	let role = $state<Role>('unassigned');
 	let rpmEntity = $state('');
+	let sizeMm = $state(0);
+	let maxRpm = $state(0);
+	let airflowCfm = $state(0);
+	let staticPressureMmH2O = $state(0);
+	let startingVoltage = $state(0);
 	let wattage = $state(0);
 	let primary = $state(false);
 	let powerControllerId = $state('');
+	let controllerChannelId = $state('');
 	let busy = $state(false);
 
 	// Reseed the form whenever the target binding changes.
@@ -55,9 +61,15 @@
 			measurement = binding.measurement ?? 'temperature';
 			role = binding.role ?? 'unassigned';
 			rpmEntity = binding.rpmEntity ?? '';
+			sizeMm = binding.sizeMm ?? 0;
+			maxRpm = binding.maxRpm ?? 0;
+			airflowCfm = binding.airflowCfm ?? 0;
+			staticPressureMmH2O = binding.staticPressureMmH2O ?? 0;
+			startingVoltage = binding.startingVoltage ?? 0;
 			wattage = binding.wattage ?? 0;
 			primary = binding.primary ?? false;
 			powerControllerId = binding.powerControllerId ?? '';
+			controllerChannelId = binding.controllerChannelId ?? '';
 		}
 	});
 
@@ -73,6 +85,9 @@
 		{ value: 'intake', label: 'Intake' },
 		{ value: 'circulation', label: 'Circulation' }
 	];
+	const controllerItems = $derived<SelectItem[]>(bindings
+		.filter((b) => b.environmentId === environmentId && b.kind === 'controller')
+		.map((b) => ({ value: b.id, label: `${b.deviceName} — ${b.name}${b.rpmEntity ? ' · RPM connected' : ''}` })));
 
 	async function addDevices(drafts: BindingDraft[]) {
 		busy = true;
@@ -96,13 +111,19 @@
 				deviceId: binding.deviceId,
 				deviceName: name.trim() || binding.deviceName,
 				powerControllerId: binding.kind === 'light' ? powerControllerId || undefined : binding.powerControllerId,
+				controllerChannelId: binding.kind === 'fan' ? controllerChannelId || undefined : binding.controllerChannelId,
 				environmentId: binding.environmentId,
 				kind: binding.kind,
 				name: binding.name,
 				entity: entity.trim(),
 				measurement: binding.kind === 'sensor' ? measurement : undefined,
-				role: binding.kind === 'fan' ? role : undefined,
-				rpmEntity: binding.kind === 'fan' || binding.kind === 'controller' ? rpmEntity.trim() : undefined,
+				role: binding.kind === 'fan' || binding.kind === 'controller' ? role : undefined,
+				rpmEntity: binding.kind === 'controller' ? rpmEntity.trim() : undefined,
+				sizeMm: binding.kind === 'fan' ? sizeMm || undefined : undefined,
+				maxRpm: binding.kind === 'fan' ? maxRpm || undefined : undefined,
+				airflowCfm: binding.kind === 'fan' ? airflowCfm || undefined : undefined,
+				staticPressureMmH2O: binding.kind === 'fan' ? staticPressureMmH2O || undefined : undefined,
+				startingVoltage: binding.kind === 'fan' ? startingVoltage || undefined : undefined,
 				wattage: binding.kind === 'light' ? wattage || 0 : undefined,
 				primary: binding.kind === 'light' ? primary : undefined
 			});
@@ -133,7 +154,7 @@
 				<span class="text-sm text-rig-400">Name</span>
 				<input bind:value={name} class="{field} mt-1" />
 			</label>
-			{#if binding.kind !== 'light'}
+			{#if binding.kind !== 'light' && binding.kind !== 'fan'}
 				<label class="block">
 					<span class="text-sm text-rig-400">Entity</span>
 					<input bind:value={entity} class="{field} mt-1 font-mono text-xs" />
@@ -150,7 +171,7 @@
 						class="mt-1"
 					/>
 				</label>
-			{:else if binding.kind === 'fan' || binding.kind === 'controller'}
+			{:else if binding.kind === 'fan'}
 				<label class="block">
 					<span class="text-sm text-rig-400">Role</span>
 					<Select
@@ -159,6 +180,23 @@
 						onValueChange={(v) => (role = v as Role)}
 						class="mt-1"
 					/>
+				</label>
+				<label class="block">
+					<span class="text-sm text-rig-400">Controller channel</span>
+					<Select bind:value={controllerChannelId} placeholder="Choose a channel…" items={controllerItems} class="mt-1" />
+					<p class="mt-1 text-xs text-rig-500">The channel contains both PWM control and RPM feedback. Multiple daisy-chained fans may share it.</p>
+				</label>
+				<div class="grid grid-cols-2 gap-3">
+					<label><span class="text-sm text-rig-400">Fan size (mm)</span><input type="number" min="0" bind:value={sizeMm} class="{field} mt-1" /></label>
+					<label><span class="text-sm text-rig-400">Maximum RPM</span><input type="number" min="0" bind:value={maxRpm} class="{field} mt-1" /></label>
+					<label><span class="text-sm text-rig-400">Airflow (CFM)</span><input type="number" min="0" step="0.1" bind:value={airflowCfm} class="{field} mt-1" /></label>
+					<label><span class="text-sm text-rig-400">Static pressure (mmH₂O)</span><input type="number" min="0" step="0.01" bind:value={staticPressureMmH2O} class="{field} mt-1" /></label>
+					<label><span class="text-sm text-rig-400">Starting voltage (V)</span><input type="number" min="0" max="48" step="0.1" bind:value={startingVoltage} class="{field} mt-1" /></label>
+				</div>
+			{:else if binding.kind === 'controller'}
+				<label class="block">
+					<span class="text-sm text-rig-400">Role</span>
+					<Select items={roleItems} value={role} onValueChange={(v) => (role = v as Role)} class="mt-1" />
 				</label>
 				<label class="block">
 					<span class="text-sm text-rig-400">RPM entity <span class="text-rig-600">(optional)</span></span>
@@ -184,7 +222,7 @@
 
 			<div class="flex justify-end gap-2 pt-2">
 				<Button variant="ghost" onclick={() => (open = false)}>Cancel</Button>
-				<Button onclick={saveEdit} disabled={busy || (binding.kind !== 'light' && !entity.trim())}>Save</Button>
+				<Button onclick={saveEdit} disabled={busy || (binding.kind === 'fan' ? !controllerChannelId : binding.kind !== 'light' && !entity.trim())}>Save</Button>
 			</div>
 		</div>
 	{:else}

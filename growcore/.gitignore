@@ -1,6 +1,7 @@
 # Build output
 /growcore
 /growcore-bin
+environments/
 
 # SQLite databases
 *.db

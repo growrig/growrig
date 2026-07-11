@@ -179,15 +179,15 @@ func (s *Server) getHistory(w http.ResponseWriter, r *http.Request) {
 	// ?hours=N returns a downsampled window (for the timeline); otherwise the
 	// legacy ?limit=N most-recent readings (for sparklines).
 	if v := q.Get("hours"); v != "" {
-		hours := 72
-		if n, e := strconv.Atoi(v); e == nil && n > 0 && n <= 24*30 {
+		hours := 72.0
+		if n, e := strconv.ParseFloat(v, 64); e == nil && n > 0 && n <= 24*30 {
 			hours = n
 		}
 		buckets := 500
 		if n, e := strconv.Atoi(q.Get("buckets")); e == nil && n > 0 && n <= 2000 {
 			buckets = n
 		}
-		since := time.Now().Add(-time.Duration(hours) * time.Hour)
+		since := time.Now().Add(-time.Duration(hours * float64(time.Hour)))
 		readings, err = s.store.ReadingsSince(id, since, buckets)
 	} else {
 		limit := 120
@@ -212,15 +212,15 @@ func (s *Server) getHistory(w http.ResponseWriter, r *http.Request) {
 // over the last ?hours, for the timeline's optional per-device lines.
 func (s *Server) getDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	hours := 72
-	if n, e := strconv.Atoi(q.Get("hours")); e == nil && n > 0 && n <= 24*30 {
+	hours := 72.0
+	if n, e := strconv.ParseFloat(q.Get("hours"), 64); e == nil && n > 0 && n <= 24*30 {
 		hours = n
 	}
 	buckets := 500
 	if n, e := strconv.Atoi(q.Get("buckets")); e == nil && n > 0 && n <= 2000 {
 		buckets = n
 	}
-	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+	since := time.Now().Add(-time.Duration(hours * float64(time.Hour)))
 	series, err := s.store.DeviceReadingsSince(r.PathValue("id"), since, buckets)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
@@ -236,15 +236,15 @@ func (s *Server) getDeviceHistory(w http.ResponseWriter, r *http.Request) {
 // own readings) over the last ?hours, for the metric-detail modal.
 func (s *Server) getSensorHistory(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	hours := 72
-	if n, e := strconv.Atoi(q.Get("hours")); e == nil && n > 0 && n <= 24*30 {
+	hours := 72.0
+	if n, e := strconv.ParseFloat(q.Get("hours"), 64); e == nil && n > 0 && n <= 24*30 {
 		hours = n
 	}
 	buckets := 500
 	if n, e := strconv.Atoi(q.Get("buckets")); e == nil && n > 0 && n <= 2000 {
 		buckets = n
 	}
-	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+	since := time.Now().Add(-time.Duration(hours * float64(time.Hour)))
 	series, err := s.store.SensorReadingsSince(r.PathValue("id"), since, buckets)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)

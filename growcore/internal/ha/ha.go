@@ -41,6 +41,7 @@ type entityMeta struct {
 	entityCategory string
 	manufacturer   string
 	model          string
+	unit           string
 }
 
 type Adapter struct {
@@ -157,7 +158,7 @@ func (a *Adapter) Discover() []control.DiscoveredEntity {
 	defer a.mu.RUnlock()
 	var out []control.DiscoveredEntity
 	for entity, m := range a.meta {
-		d := control.DiscoveredEntity{Entity: entity, Name: m.name, HADeviceID: m.deviceID, DeviceName: m.deviceName, Integration: m.integration, EntityCategory: m.entityCategory, Manufacturer: m.manufacturer, Model: m.model}
+		d := control.DiscoveredEntity{Entity: entity, Name: m.name, HADeviceID: m.deviceID, DeviceName: m.deviceName, Integration: m.integration, EntityCategory: m.entityCategory, Manufacturer: m.manufacturer, Model: m.model, Unit: m.unit}
 		if d.Name == "" {
 			d.Name = entity
 		}
@@ -173,7 +174,11 @@ func (a *Adapter) Discover() []control.DiscoveredEntity {
 			case "power":
 				d.Kind, d.Measurement = domain.KindSensor, domain.MeasurePower
 			default:
-				continue
+				if strings.EqualFold(strings.TrimSpace(m.unit), "rpm") {
+					d.Kind = domain.KindSensor
+				} else {
+					continue
+				}
 			}
 		case "fan":
 			d.Kind = domain.KindController
@@ -311,7 +316,7 @@ func (a *Adapter) storeState(st haState) {
 	defer a.mu.Unlock()
 	a.states[st.EntityID] = st.State
 	m := a.meta[st.EntityID]
-	m.name, m.deviceClass = st.Attributes.FriendlyName, st.Attributes.DeviceClass
+	m.name, m.deviceClass, m.unit = st.Attributes.FriendlyName, st.Attributes.DeviceClass, st.Attributes.Unit
 	a.meta[st.EntityID] = m
 	if v, err := strconv.ParseFloat(st.State, 64); err == nil {
 		a.values[st.EntityID] = v
@@ -415,5 +420,6 @@ type haState struct {
 	Attributes struct {
 		FriendlyName string `json:"friendly_name"`
 		DeviceClass  string `json:"device_class"`
+		Unit         string `json:"unit_of_measurement"`
 	} `json:"attributes"`
 }

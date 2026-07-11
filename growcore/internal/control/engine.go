@@ -131,7 +131,7 @@ func (e *Engine) step(dt time.Duration) error {
 	for _, env := range envs {
 		c, sensors := e.readSensors(byEnv[env.ID])
 		if c.hasTemp && c.hasHum {
-			c.vpd = round2(domain.VPD(c.tempC, c.humidity))
+			c.vpd = round2(domain.LeafVPD(c.tempC, c.humidity, env.LeafTempOffsetC))
 		}
 		climates[env.ID] = c
 		sensorsByEnv[env.ID] = sensors
@@ -204,7 +204,11 @@ func (e *Engine) step(dt time.Duration) error {
 				if channel.Entity == "" {
 					channel = b
 				}
-				cs := domain.ControlState{ID: b.ID, Name: b.Name, Kind: domain.KindFan, Role: b.Role, Entity: channel.Entity}
+				displayName := b.DeviceName
+				if displayName == "" {
+					displayName = b.Name
+				}
+				cs := domain.ControlState{ID: b.ID, Name: displayName, Kind: domain.KindFan, Role: b.Role, Entity: channel.Entity, MaxRPM: b.MaxRPM}
 				if c.hasTemp {
 					speed := ChannelSpeed(b.Role, env, c.tempC)
 					cs.DesiredSpeed = speed
@@ -236,8 +240,12 @@ func (e *Engine) step(dt time.Duration) error {
 			case domain.KindLight:
 				entity := powerEntityByDevice[b.PowerControllerID]
 				e.issue(env.ID+":light:"+b.ID, entity == "", env.ID, b.DeviceID, b.Name+" has no power controller assigned", b.Name+" power controller is connected")
+				displayName := b.DeviceName
+				if displayName == "" {
+					displayName = b.Name
+				}
 				cs := domain.ControlState{
-					ID: b.ID, Name: b.Name, Kind: domain.KindLight, Entity: entity,
+					ID: b.ID, Name: displayName, Kind: domain.KindLight, Entity: entity,
 					Wattage: b.Wattage, Primary: b.Primary,
 				}
 				on, known := e.adapter.SwitchState(entity)

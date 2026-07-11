@@ -251,8 +251,8 @@ func (s *Server) resolveEnvLocation(envID string) string {
 // resolved location, for overlaying on the metric-detail modal.
 func (s *Server) getWeatherHistory(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	hours := 72
-	if n, e := strconv.Atoi(q.Get("hours")); e == nil && n > 0 && n <= 24*90 {
+	hours := 72.0
+	if n, e := strconv.ParseFloat(q.Get("hours"), 64); e == nil && n > 0 && n <= 24*90 {
 		hours = n
 	}
 	buckets := 500
@@ -264,7 +264,7 @@ func (s *Server) getWeatherHistory(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, domain.WeatherHistory{})
 		return
 	}
-	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+	since := time.Now().Add(-time.Duration(hours * float64(time.Hour)))
 	hist, err := s.store.WeatherReadingsSince(locID, since, buckets)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)

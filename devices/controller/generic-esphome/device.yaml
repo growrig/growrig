@@ -3,10 +3,13 @@ model: Generic ESPHome controller
 connection: esphome
 haIntegration: esphome
 description: ESP32 running ESPHome with two independently bindable PWM output channels and tachometer inputs. Channels can drive fans now and other compatible equipment in the future.
+maxChannels: 2
 provides:
   - label: PWM channel 1
     kind: controller
     entityDomain: fan
+    rpmEntityDomain: sensor
   - label: PWM channel 2
     kind: controller
     entityDomain: fan
+    rpmEntityDomain: sensor

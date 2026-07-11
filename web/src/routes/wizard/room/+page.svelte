@@ -36,7 +36,8 @@
 				targetTempC: 22,
 				targetHumidity: 50,
 				targetCO2: 0,
-				emergencyTempC: 35
+				emergencyTempC: 35,
+				leafTempOffsetC: -2
 			});
 			for (const d of devices) await createBinding({ environmentId: room.id, ...d });
 			await goto(`/env/${room.id}`);

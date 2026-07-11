@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS environments (
     target_temp     REAL NOT NULL DEFAULT 24,
     target_humidity REAL NOT NULL DEFAULT 55,
     target_co2      REAL NOT NULL DEFAULT 0,
-    emergency_temp  REAL NOT NULL DEFAULT 35
+    emergency_temp  REAL NOT NULL DEFAULT 35,
+    leaf_temp_offset REAL NOT NULL DEFAULT -2
 );
 CREATE TABLE IF NOT EXISTS locations (
     id      TEXT PRIMARY KEY,
@@ -99,6 +100,11 @@ CREATE TABLE IF NOT EXISTS bindings (
     rpm_entity     TEXT NOT NULL DEFAULT '',
     wattage        REAL NOT NULL DEFAULT 0,
     is_primary     INTEGER NOT NULL DEFAULT 0,
+	max_rpm        INTEGER NOT NULL DEFAULT 0,
+	size_mm        INTEGER NOT NULL DEFAULT 0,
+	airflow_cfm    REAL NOT NULL DEFAULT 0,
+	static_pressure REAL NOT NULL DEFAULT 0,
+	starting_voltage REAL NOT NULL DEFAULT 0,
     created        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_bindings_env ON bindings (environment_id);
@@ -189,7 +195,13 @@ DROP TABLE IF EXISTS devices;
 		{"bindings", "is_primary", "INTEGER NOT NULL DEFAULT 0"},
 		{"bindings", "power_controller_id", "TEXT NOT NULL DEFAULT ''"},
 		{"bindings", "controller_channel_id", "TEXT NOT NULL DEFAULT ''"},
+		{"bindings", "max_rpm", "INTEGER NOT NULL DEFAULT 0"},
+		{"bindings", "size_mm", "INTEGER NOT NULL DEFAULT 0"},
+		{"bindings", "airflow_cfm", "REAL NOT NULL DEFAULT 0"},
+		{"bindings", "static_pressure", "REAL NOT NULL DEFAULT 0"},
+		{"bindings", "starting_voltage", "REAL NOT NULL DEFAULT 0"},
 		{"environments", "location_id", "TEXT NOT NULL DEFAULT ''"},
+		{"environments", "leaf_temp_offset", "REAL NOT NULL DEFAULT -2"},
 	} {
 		if err := s.ensureColumn(m.table, m.column, m.def); err != nil {
 			return err
@@ -239,17 +251,18 @@ func (s *Store) SaveEnvironment(e domain.Environment) error {
 	}
 	_, err := s.db.Exec(
 		`INSERT INTO environments
-		   (id, name, kind, air_source, location_id, model, width_cm, depth_cm, height_cm, target_temp, target_humidity, target_co2, emergency_temp)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   (id, name, kind, air_source, location_id, model, width_cm, depth_cm, height_cm, target_temp, target_humidity, target_co2, emergency_temp, leaf_temp_offset)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   name=excluded.name, kind=excluded.kind, air_source=excluded.air_source,
 		   location_id=excluded.location_id, model=excluded.model,
 		   width_cm=excluded.width_cm, depth_cm=excluded.depth_cm, height_cm=excluded.height_cm,
 		   target_temp=excluded.target_temp, target_humidity=excluded.target_humidity,
-		   target_co2=excluded.target_co2, emergency_temp=excluded.emergency_temp`,
+		   target_co2=excluded.target_co2, emergency_temp=excluded.emergency_temp,
+		   leaf_temp_offset=excluded.leaf_temp_offset`,
 		e.ID, e.Name, string(e.Kind), e.AirSourceID, e.LocationID, e.Model,
 		e.WidthCm, e.DepthCm, e.HeightCm,
-		e.TargetTempC, e.TargetHumidity, e.TargetCO2, e.EmergencyTempC,
+		e.TargetTempC, e.TargetHumidity, e.TargetCO2, e.EmergencyTempC, e.LeafTempOffsetC,
 	)
 	if err != nil {
 		return err
@@ -272,7 +285,7 @@ func (s *Store) UpdateTargets(id string, targetTemp, targetHumidity float64) err
 
 func (s *Store) Environments() ([]domain.Environment, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, kind, air_source, location_id, model, width_cm, depth_cm, height_cm, target_temp, target_humidity, target_co2, emergency_temp
+		`SELECT id, name, kind, air_source, location_id, model, width_cm, depth_cm, height_cm, target_temp, target_humidity, target_co2, emergency_temp, leaf_temp_offset
 		 FROM environments ORDER BY kind DESC, name`) // tents before rooms
 	if err != nil {
 		return nil, err
@@ -283,7 +296,7 @@ func (s *Store) Environments() ([]domain.Environment, error) {
 		var e domain.Environment
 		var kind string
 		if err := rows.Scan(&e.ID, &e.Name, &kind, &e.AirSourceID, &e.LocationID, &e.Model, &e.WidthCm, &e.DepthCm, &e.HeightCm,
-			&e.TargetTempC, &e.TargetHumidity, &e.TargetCO2, &e.EmergencyTempC); err != nil {
+			&e.TargetTempC, &e.TargetHumidity, &e.TargetCO2, &e.EmergencyTempC, &e.LeafTempOffsetC); err != nil {
 			return nil, err
 		}
 		e.Kind = domain.EnvironmentKind(kind)
@@ -495,17 +508,19 @@ func (s *Store) DeleteEnvironment(id string) error {
 
 func (s *Store) SaveBinding(b domain.Binding) error {
 	_, err := s.db.Exec(
-		`INSERT INTO bindings (id, device_id, device_name, power_controller_id, controller_channel_id, environment_id, kind, name, entity, measurement, role, rpm_entity, wattage, is_primary, created)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO bindings (id, device_id, device_name, power_controller_id, controller_channel_id, environment_id, kind, name, entity, measurement, role, rpm_entity, wattage, is_primary, size_mm, max_rpm, airflow_cfm, static_pressure, starting_voltage, created)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   device_id=excluded.device_id, device_name=excluded.device_name,
 		   power_controller_id=excluded.power_controller_id,
 		   controller_channel_id=excluded.controller_channel_id,
 		   environment_id=excluded.environment_id, kind=excluded.kind, name=excluded.name,
 		   entity=excluded.entity, measurement=excluded.measurement, role=excluded.role,
-		   rpm_entity=excluded.rpm_entity, wattage=excluded.wattage, is_primary=excluded.is_primary`,
+		   rpm_entity=excluded.rpm_entity, wattage=excluded.wattage, is_primary=excluded.is_primary,
+		   size_mm=excluded.size_mm, max_rpm=excluded.max_rpm, airflow_cfm=excluded.airflow_cfm,
+		   static_pressure=excluded.static_pressure, starting_voltage=excluded.starting_voltage`,
 		b.ID, b.DeviceID, b.DeviceName, b.PowerControllerID, b.ControllerChannelID, b.EnvironmentID, string(b.Kind), b.Name, b.Entity,
-		string(b.Measurement), string(b.Role), b.RPMEntity, b.Wattage, boolToInt(b.Primary), time.Now().UnixNano(),
+		string(b.Measurement), string(b.Role), b.RPMEntity, b.Wattage, boolToInt(b.Primary), b.SizeMM, b.MaxRPM, b.AirflowCFM, b.StaticPressureMMH2O, b.StartingVoltage, time.Now().UnixNano(),
 	)
 	if err != nil {
 		return err
@@ -586,7 +601,7 @@ func boolToInt(b bool) int {
 
 func (s *Store) Bindings() ([]domain.Binding, error) {
 	rows, err := s.db.Query(
-		`SELECT id, device_id, device_name, power_controller_id, controller_channel_id, environment_id, kind, name, entity, measurement, role, rpm_entity, wattage, is_primary
+		`SELECT id, device_id, device_name, power_controller_id, controller_channel_id, environment_id, kind, name, entity, measurement, role, rpm_entity, wattage, is_primary, size_mm, max_rpm, airflow_cfm, static_pressure, starting_voltage
 		 FROM bindings ORDER BY created`)
 	if err != nil {
 		return nil, err
@@ -597,7 +612,7 @@ func (s *Store) Bindings() ([]domain.Binding, error) {
 		var b domain.Binding
 		var kind, measurement, role string
 		var isPrimary int
-		if err := rows.Scan(&b.ID, &b.DeviceID, &b.DeviceName, &b.PowerControllerID, &b.ControllerChannelID, &b.EnvironmentID, &kind, &b.Name, &b.Entity, &measurement, &role, &b.RPMEntity, &b.Wattage, &isPrimary); err != nil {
+		if err := rows.Scan(&b.ID, &b.DeviceID, &b.DeviceName, &b.PowerControllerID, &b.ControllerChannelID, &b.EnvironmentID, &kind, &b.Name, &b.Entity, &measurement, &role, &b.RPMEntity, &b.Wattage, &isPrimary, &b.SizeMM, &b.MaxRPM, &b.AirflowCFM, &b.StaticPressureMMH2O, &b.StartingVoltage); err != nil {
 			return nil, err
 		}
 		b.Kind = domain.BindingKind(kind)

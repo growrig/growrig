@@ -21,12 +21,18 @@
 			await updateBinding(binding.id, {
 				deviceId: binding.deviceId,
 				deviceName: binding.deviceName,
+				controllerChannelId: binding.controllerChannelId,
 				environmentId: binding.environmentId,
 				kind: binding.kind,
 				name: binding.name,
 				entity: binding.entity,
 				role,
-				rpmEntity: binding.rpmEntity
+				rpmEntity: binding.rpmEntity,
+				sizeMm: binding.sizeMm,
+				maxRpm: binding.maxRpm,
+				airflowCfm: binding.airflowCfm,
+				staticPressureMmH2O: binding.staticPressureMmH2O,
+				startingVoltage: binding.startingVoltage
 			});
 			flash('ok', 'Role updated');
 			onChanged();

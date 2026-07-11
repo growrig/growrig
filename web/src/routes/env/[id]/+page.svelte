@@ -30,6 +30,7 @@
 	const env = $derived(live.snapshot?.environments?.find((e) => e.id === id));
 
 	const fans = $derived(env?.controls?.filter((c) => c.kind === 'fan') ?? []);
+	const rpmProgress = (rpm: number, maxRpm?: number) => Math.min(100, Math.max(0, (rpm / (maxRpm || 2500)) * 100));
 	const lights = $derived(env?.controls?.filter((c) => c.kind === 'light') ?? []);
 	// Primary grow light first, then the rest.
 	const primaryLight = $derived(lights.find((l) => l.primary) ?? lights[0]);
@@ -260,9 +261,14 @@
 					<div class="grid gap-3 sm:grid-cols-2">
 						{#each orderedLights as light (light.id)}
 							{@const power = light.power ?? (light.on ? light.wattage ?? 0 : 0)}
-							<div class="rounded-lg border border-rig-800 bg-rig-950/40 p-3">
+							<div
+								role="button" tabindex="0"
+								onclick={() => openMetric({ kind: 'device', bindingId: light.id, metric: 'power' }, `${light.name} · power`, 'W')}
+								onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openMetric({ kind: 'device', bindingId: light.id, metric: 'power' }, `${light.name} · power`, 'W'); } }}
+								class="group cursor-pointer rounded-lg border border-rig-800 bg-rig-950/40 p-3 text-left transition-colors hover:border-rig-600 focus-visible:border-rig-500 focus-visible:outline-none"
+							>
 								<div class="flex items-center justify-between">
-									<div class="flex items-center gap-2">
+									<div class="flex items-center gap-2" role="presentation" onclick={(event) => event.stopPropagation()} onkeydown={(event) => event.stopPropagation()}>
 										{#if light.on}
 											<Lightbulb size={18} class="text-leaf" />
 										{:else}
@@ -314,14 +320,19 @@
 				<h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-rig-400">Controls</h2>
 				<div class="grid gap-3 sm:grid-cols-2">
 					{#each fans as fan (fan.id)}
-						<div class="rounded-lg border border-rig-800 bg-rig-950/40 p-3">
+						<div
+							role="button" tabindex="0"
+							onclick={() => openMetric({ kind: 'device', bindingId: fan.id, metric: 'rpm' }, `${fan.name} · speed`, 'rpm')}
+							onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openMetric({ kind: 'device', bindingId: fan.id, metric: 'rpm' }, `${fan.name} · speed`, 'rpm'); } }}
+							class="group cursor-pointer rounded-lg border border-rig-800 bg-rig-950/40 p-3 text-left transition-colors hover:border-rig-600 focus-visible:border-rig-500 focus-visible:outline-none"
+						>
 							<div class="mb-2 flex items-center justify-between text-sm">
 								<span class="font-medium">{fan.name}</span>
 								<div class="flex items-center gap-2">
 									<span class="text-rig-400">{roleLabel[fan.role ?? 'unassigned']}</span>
 									<button
 										type="button"
-										onclick={() => openMetric({ kind: 'device', bindingId: fan.id, metric: 'rpm' }, `${fan.name} · speed`, 'rpm')}
+										onclick={(event) => { event.stopPropagation(); openMetric({ kind: 'device', bindingId: fan.id, metric: 'rpm' }, `${fan.name} · speed`, 'rpm'); }}
 										class="rounded-md p-1 text-rig-500 transition-colors hover:bg-rig-800 hover:text-rig-100"
 										aria-label="Speed history"
 									>
@@ -333,8 +344,9 @@
 								<span>speed</span>
 								<span class="tabular-nums">{fan.desiredSpeed}% · {fan.rpm} rpm</span>
 							</div>
-							<div class="h-2 overflow-hidden rounded-full bg-rig-800">
-								<div class="h-full rounded-full bg-rig-500 transition-all duration-500" style="width:{fan.desiredSpeed}%"></div>
+							<div class="relative h-2 overflow-hidden rounded-full bg-rig-800" title="Speed setting {fan.desiredSpeed}% · RPM feedback {fan.rpm}">
+								<div class="absolute inset-y-0 left-0 rounded-full bg-sky-500/45 transition-all duration-500" style="width:{fan.desiredSpeed}%"></div>
+								<div class="absolute inset-y-0 left-0 rounded-full bg-leaf transition-all duration-500" style="width:{rpmProgress(fan.rpm, fan.maxRpm)}%"></div>
 							</div>
 						</div>
 					{/each}
@@ -395,6 +407,9 @@
 			sensors={env.sensors ?? []}
 			controls={env.controls ?? []}
 			vpdCurrent={env.hasClimate ? env.vpd : null}
+			vpdTempC={env.hasClimate ? env.tempC : null}
+			vpdHumidity={env.hasClimate ? env.humidity : null}
+			vpdLeafTempOffsetC={env.leafTempOffsetC ?? -2}
 		/>
 	{/if}
 {/if}

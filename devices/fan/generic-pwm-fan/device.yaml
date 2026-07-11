@@ -2,6 +2,14 @@ brand: Generic
 model: PC Fan (12V/PWM)
 connection: generic
 description: A physical PWM fan. Assign it to a separately installed controller channel.
+fanPresets:
+  - id: arctic-p12
+    label: Arctic P12
+    sizeMm: 120
+    maxRpm: 1800
+    airflowCfm: 56.3
+    staticPressureMmH2O: 2.20
+    startingVoltage: 2.8
 provides:
   - label: Fan
     kind: fan

@@ -41,18 +41,19 @@ func (s *Server) putEnvironmentConfig(w http.ResponseWriter, r *http.Request) {
 // --- Environments ---
 
 type environmentBody struct {
-	Name           string                 `json:"name"`
-	Kind           domain.EnvironmentKind `json:"kind"`
-	AirSourceID    string                 `json:"airSourceId"`
-	LocationID     string                 `json:"locationId"`
-	Model          string                 `json:"model"`
-	WidthCm        float64                `json:"widthCm"`
-	DepthCm        float64                `json:"depthCm"`
-	HeightCm       float64                `json:"heightCm"`
-	TargetTempC    float64                `json:"targetTempC"`
-	TargetHumidity float64                `json:"targetHumidity"`
-	TargetCO2      float64                `json:"targetCO2"`
-	EmergencyTempC float64                `json:"emergencyTempC"`
+	Name            string                 `json:"name"`
+	Kind            domain.EnvironmentKind `json:"kind"`
+	AirSourceID     string                 `json:"airSourceId"`
+	LocationID      string                 `json:"locationId"`
+	Model           string                 `json:"model"`
+	WidthCm         float64                `json:"widthCm"`
+	DepthCm         float64                `json:"depthCm"`
+	HeightCm        float64                `json:"heightCm"`
+	TargetTempC     float64                `json:"targetTempC"`
+	TargetHumidity  float64                `json:"targetHumidity"`
+	TargetCO2       float64                `json:"targetCO2"`
+	EmergencyTempC  float64                `json:"emergencyTempC"`
+	LeafTempOffsetC *float64               `json:"leafTempOffsetC"`
 }
 
 func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
@@ -116,15 +117,22 @@ func (s *Server) buildEnvironment(envID string, b environmentBody) (domain.Envir
 	}
 	env := domain.Environment{
 		ID: envID, Name: b.Name, Kind: kind, AirSourceID: b.AirSourceID,
-		LocationID:     b.LocationID,
-		Model:          b.Model,
-		WidthCm:        b.WidthCm,
-		DepthCm:        b.DepthCm,
-		HeightCm:       b.HeightCm,
-		TargetTempC:    orDefault(b.TargetTempC, 24),
-		TargetHumidity: orDefault(b.TargetHumidity, 55),
-		TargetCO2:      b.TargetCO2,
-		EmergencyTempC: orDefault(b.EmergencyTempC, 35),
+		LocationID:      b.LocationID,
+		Model:           b.Model,
+		WidthCm:         b.WidthCm,
+		DepthCm:         b.DepthCm,
+		HeightCm:        b.HeightCm,
+		TargetTempC:     orDefault(b.TargetTempC, 24),
+		TargetHumidity:  orDefault(b.TargetHumidity, 55),
+		TargetCO2:       b.TargetCO2,
+		EmergencyTempC:  orDefault(b.EmergencyTempC, 35),
+		LeafTempOffsetC: -2,
+	}
+	if b.LeafTempOffsetC != nil {
+		env.LeafTempOffsetC = *b.LeafTempOffsetC
+	}
+	if env.LeafTempOffsetC < -10 || env.LeafTempOffsetC > 10 {
+		return domain.Environment{}, fmt.Errorf("leafTempOffsetC must be between -10 and 10")
 	}
 	if kind == domain.KindRoom {
 		env.AirSourceID = "" // rooms don't have an air source
@@ -149,6 +157,11 @@ type bindingBody struct {
 	Measurement         domain.Measurement `json:"measurement"`
 	Role                domain.Role        `json:"role"`
 	RPMEntity           string             `json:"rpmEntity"`
+	SizeMM              int                `json:"sizeMm"`
+	MaxRPM              int                `json:"maxRpm"`
+	AirflowCFM          float64            `json:"airflowCfm"`
+	StaticPressureMMH2O float64            `json:"staticPressureMmH2O"`
+	StartingVoltage     float64            `json:"startingVoltage"`
 	Wattage             float64            `json:"wattage"`
 	Primary             bool               `json:"primary"`
 }
@@ -309,6 +322,11 @@ func (s *Server) buildBinding(bindingID string, b bindingBody) (domain.Binding, 
 			return domain.Binding{}, fmt.Errorf("unknown role %q", role)
 		}
 		binding.Role = role
+		if b.SizeMM < 0 || b.SizeMM > 1000 || b.MaxRPM < 0 || b.MaxRPM > 100000 || b.AirflowCFM < 0 || b.StaticPressureMMH2O < 0 || b.StartingVoltage < 0 || b.StartingVoltage > 48 {
+			return domain.Binding{}, fmt.Errorf("fan specifications must be positive and within supported ranges")
+		}
+		binding.SizeMM, binding.MaxRPM, binding.AirflowCFM = b.SizeMM, b.MaxRPM, b.AirflowCFM
+		binding.StaticPressureMMH2O, binding.StartingVoltage = b.StaticPressureMMH2O, b.StartingVoltage
 	case domain.KindController:
 		role := b.Role
 		if role == "" {
