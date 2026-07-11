@@ -7,7 +7,10 @@
 		color: string;
 		points: { t: number; value: number }[];
 		dash?: boolean; // dashed = a comparison line (average / outdoor)
-		opacity?: number;
+	opacity?: number;
+	/** Percentage series use a separate fixed 0–100 right-hand axis. */
+	axis?: 'primary' | 'percent';
+	unit?: string;
 	}
 
 	interface Props {
@@ -22,11 +25,12 @@
 	let { lines, unit, height = 220, now, zeroBaseline = false }: Props = $props();
 
 	let wrapW = $state(640);
-	const pad = { top: 12, right: 16, bottom: 22, left: 44 };
+	const pad = { top: 12, right: 40, bottom: 22, left: 44 };
 	const plotW = $derived(Math.max(0, wrapW - pad.left - pad.right));
 	const plotH = $derived(height - pad.top - pad.bottom);
 
 	const allPoints = $derived(lines.flatMap((l) => l.points));
+	const primaryPoints = $derived(lines.filter((l) => l.axis !== 'percent').flatMap((l) => l.points));
 
 	const xDomain = $derived.by<[number, number]>(() => {
 		if (allPoints.length === 0) return [0, 1];
@@ -42,7 +46,7 @@
 	const yDomain = $derived.by<[number, number]>(() => {
 		let min = Infinity;
 		let max = -Infinity;
-		for (const p of allPoints) {
+		for (const p of primaryPoints) {
 			if (p.value == null || Number.isNaN(p.value)) continue;
 			if (p.value < min) min = p.value;
 			if (p.value > max) max = p.value;
@@ -65,6 +69,7 @@
 		const [a, b] = yDomain;
 		return pad.top + plotH - ((v - a) / (b - a)) * plotH;
 	});
+	const yPercent = $derived((v: number) => pad.top + plotH - (Math.max(0, Math.min(100, v)) / 100) * plotH);
 
 	const paths = $derived(
 		lines.map((l) => ({
@@ -72,11 +77,12 @@
 			color: l.color,
 			dash: !!l.dash,
 			opacity: l.opacity ?? 1,
+			axis: l.axis ?? 'primary',
 			d:
 				d3line<{ t: number; value: number }>()
 					.defined((d) => d.value != null && !Number.isNaN(d.value))
 					.x((d) => x(d.t))
-					.y((d) => y(d.value))
+					.y((d) => l.axis === 'percent' ? yPercent(d.value) : y(d.value))
 					.curve(curveMonotoneX)(l.points) ?? ''
 		}))
 	);
@@ -176,6 +182,11 @@
 			<line x1={pad.left} x2={wrapW - pad.right} y1={t.y} y2={t.y} stroke="var(--color-rig-800)" stroke-width="1" />
 			<text x={pad.left - 6} y={t.y + 3} text-anchor="end" fill="var(--color-rig-500)" font-size="10">{t.label}</text>
 		{/each}
+		{#if lines.some((line) => line.axis === 'percent')}
+			{#each [0, 50, 100] as value}
+				<text x={wrapW - pad.right + 4} y={yPercent(value) + 3} text-anchor="start" fill="var(--color-sky-400)" font-size="10">{value}%</text>
+			{/each}
+		{/if}
 		<!-- x labels -->
 		{#each xTicks as t (t.x)}
 			<text x={t.x} y={height - 6} text-anchor="middle" fill="var(--color-rig-500)" font-size="10">{t.label}</text>
@@ -203,7 +214,7 @@
 			{#each lines as l (l.id)}
 				{@const v = valueAt(l, hoverT)}
 				{#if v != null}
-					<circle cx={x(hoverT)} cy={y(v)} r="3.5" fill={l.color} stroke="var(--color-rig-950)" stroke-width="1.5" />
+				<circle cx={x(hoverT)} cy={l.axis === 'percent' ? yPercent(v) : y(v)} r="3.5" fill={l.color} stroke="var(--color-rig-950)" stroke-width="1.5" />
 				{/if}
 			{/each}
 		{/if}
@@ -218,7 +229,7 @@
 				{@const v = valueAt(l, hoverT)}
 				<div class="flex items-center justify-between gap-3">
 					<span class="inline-flex items-center gap-1.5"><span class="inline-block h-2 w-2 rounded-full" style="background:{l.color}"></span>{l.name}</span>
-					<span class="tabular-nums text-rig-100">{v == null ? '—' : `${v.toFixed(decs)}${unit ? ' ' + unit : ''}`}</span>
+					<span class="tabular-nums text-rig-100">{v == null ? '—' : `${v.toFixed(l.axis === 'percent' ? 0 : decs)} ${l.unit ?? unit}`}</span>
 				</div>
 			{/each}
 		</div>

@@ -235,6 +235,9 @@ func (e *Engine) step(dt time.Duration) error {
 					devSamples = append(devSamples, domain.DeviceReading{
 						BindingID: b.ID, EnvironmentID: env.ID, Time: now, Metric: "rpm", Value: float64(cs.RPM),
 					})
+					devSamples = append(devSamples, domain.DeviceReading{
+						BindingID: b.ID, EnvironmentID: env.ID, Time: now, Metric: "speed", Value: float64(cs.DesiredSpeed),
+					})
 				}
 				view.Controls = append(view.Controls, cs)
 			case domain.KindLight:

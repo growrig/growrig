@@ -222,7 +222,7 @@ export interface SeriesPoint {
 
 export interface DeviceSeries {
 	bindingId: string;
-	metric: 'rpm' | 'power';
+	metric: 'rpm' | 'speed' | 'power';
 	points: SeriesPoint[];
 }
 

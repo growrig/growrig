@@ -28,6 +28,7 @@
 		current: number | null;
 		ok: boolean;
 		sub?: string;
+		unit?: string;
 	}
 
 	interface Props {
@@ -184,9 +185,9 @@
 			lines.push({ id: 'vpd', name: 'VPD', color: '#4ade80', points });
 			items.push({ id: 'vpd', name: `${vpdLeafTempOffsetC === 0 ? 'Air' : 'Leaf'} VPD (derived)`, entity: '', color: '#4ade80', current: vpdCurrent, ok: vpdCurrent != null });
 		} else {
-			const ds = deviceData.find((d) => d.bindingId === descriptor.bindingId);
+			const ds = deviceData.find((d) => d.bindingId === descriptor.bindingId && d.metric === descriptor.metric);
 			const ctrl = controls.find((c) => c.id === descriptor.bindingId);
-			const color = descriptor.metric === 'rpm' ? '#22d3ee' : '#fbbf24';
+			const color = descriptor.metric === 'rpm' ? '#4ade80' : '#fbbf24';
 			const current =
 				descriptor.metric === 'rpm'
 					? (ctrl?.rpm ?? null)
@@ -194,6 +195,11 @@
 						? (ctrl.power ?? (ctrl.on ? ctrl.wattage ?? 0 : 0))
 						: null;
 			lines.push({ id: descriptor.bindingId, name: ctrl?.name ?? descriptor.bindingId, color, points: toMs(ds?.points ?? []) });
+			if (descriptor.metric === 'rpm') {
+				const speed = deviceData.find((d) => d.bindingId === descriptor.bindingId && d.metric === 'speed');
+				lines.push({ id: `${descriptor.bindingId}:speed`, name: 'Configured speed', color: '#38bdf8', points: toMs(speed?.points ?? []), axis: 'percent', unit: '%' });
+				items.push({ id: `${descriptor.bindingId}:speed`, name: 'Configured speed', entity: '', color: '#38bdf8', current: ctrl?.desiredSpeed ?? null, ok: !!ctrl, unit: '%' });
+			}
 			items.push({
 				id: descriptor.bindingId,
 				name: ctrl?.name ?? descriptor.bindingId,
@@ -209,8 +215,11 @@
 
 	const note = $derived(descriptor.kind === 'vpd' ? (vpdLeafTempOffsetC === 0 ? 'Air VPD derived from air temperature & humidity — no leaf-temperature correction.' : `Leaf VPD derived using a ${vpdLeafTempOffsetC > 0 ? '+' : ''}${vpdLeafTempOffsetC}°C leaf-temperature offset.`) : undefined);
 	const hasHistory = $derived(built.lines.some((l) => l.points.length > 1));
-	const decs = $derived(unit === 'kPa' ? 2 : unit === '°C' ? 1 : 0);
-	const fmt = (v: number | null) => (v == null ? '—' : `${v.toFixed(decs)}${unit ? ' ' + unit : ''}`);
+	const fmt = (v: number | null, valueUnit = unit) => {
+		if (v == null) return '—';
+		const valueDecs = valueUnit === 'kPa' ? 2 : valueUnit === '°C' ? 1 : 0;
+		return `${v.toFixed(valueDecs)}${valueUnit ? ' ' + valueUnit : ''}`;
+	};
 </script>
 
 <Dialog bind:open {title} description={note} size="2xl">
@@ -274,7 +283,7 @@
 						</div>
 					</div>
 					<div class="flex items-center gap-2 whitespace-nowrap">
-						<span class="text-sm font-semibold tabular-nums {s.ok ? 'text-rig-100' : 'text-rig-600'}">{s.ok ? fmt(s.current) : '—'}</span>
+						<span class="text-sm font-semibold tabular-nums {s.ok ? 'text-rig-100' : 'text-rig-600'}">{s.ok ? fmt(s.current, s.unit ?? unit) : '—'}</span>
 					</div>
 				</li>
 			{/each}
