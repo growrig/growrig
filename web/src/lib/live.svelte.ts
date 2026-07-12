@@ -38,6 +38,11 @@ class LiveState {
 		if (this.#timer) clearTimeout(this.#timer);
 		this.#ws?.close();
 		this.#ws = null;
+		// Drop cached state so a signed-out (or switched) user never sees the
+		// previous session's environments.
+		this.snapshot = null;
+		this.status = 'connecting';
+		this.lastSource = null;
 	}
 
 	/** One-shot REST fetch for the initial snapshot. */

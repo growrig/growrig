@@ -11,8 +11,10 @@
 		phases: Phase[];
 		defaults: PhotoperiodDefaults;
 		hasPrimaryLight: boolean;
+		/** When false, the cycle/schedule is read-only (no edit controls). */
+		canEdit?: boolean;
 	}
-	let { environmentId, cycle, schedule, phases, defaults, hasPrimaryLight }: Props = $props();
+	let { environmentId, cycle, schedule, phases, defaults, hasPrimaryLight, canEdit = true }: Props = $props();
 
 	let editing = $state(false);
 
@@ -77,15 +79,21 @@
 						<span>{lightingSummary}</span>
 					</div>
 				</div>
-				<button onclick={() => (editing = true)} class="rounded-md border border-rig-700 px-3 py-1.5 text-sm text-rig-300 hover:border-rig-500">Edit</button>
+				{#if canEdit}
+					<button onclick={() => (editing = true)} class="rounded-md border border-rig-700 px-3 py-1.5 text-sm text-rig-300 hover:border-rig-500">Edit</button>
+				{/if}
 			</div>
 		{:else}
 			<div class="flex items-center justify-between">
 				<span class="text-sm text-rig-400">No active cycle.</span>
-				<button onclick={() => (editing = true)} class="rounded-md bg-rig-500 px-3 py-1.5 text-sm font-medium text-rig-950 hover:bg-rig-400">Start a cycle</button>
+				{#if canEdit}
+					<button onclick={() => (editing = true)} class="rounded-md bg-rig-500 px-3 py-1.5 text-sm font-medium text-rig-950 hover:bg-rig-400">Start a cycle</button>
+				{/if}
 			</div>
 		{/if}
 	</div>
 </section>
 
-<CycleModal bind:open={editing} {environmentId} {cycle} {schedule} {phases} {defaults} {hasPrimaryLight} />
+{#if canEdit}
+	<CycleModal bind:open={editing} {environmentId} {cycle} {schedule} {phases} {defaults} {hasPrimaryLight} />
+{/if}

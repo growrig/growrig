@@ -4,6 +4,8 @@
 import type {
 	Binding,
 	Activity,
+	AuthResult,
+	AuthStatus,
 	BindingKind,
 	CatalogProduct,
 	Cycle,
@@ -11,10 +13,15 @@ import type {
 	DiscoveredEntity,
 	Environment,
 	EnvironmentKind,
+	EnvAccess,
 	FanType,
 	GeocodeResult,
+	HAStatus,
+	HAUpdateTarget,
 	Info,
 	Location,
+	User,
+	UserRole,
 	Weather,
 	LightSchedule,
 	LightScheduleMode,
@@ -30,20 +37,46 @@ import type {
 
 export const CORE_URL: string = import.meta.env.VITE_GROWCORE_URL?.replace(/\/$/, '') ?? '';
 
+// --- auth token plumbing ---
+// The bearer token is held here so both the REST client and the WebSocket can
+// read it. The auth store owns its lifecycle (persisting to localStorage); it
+// installs a callback so a 401 can force a re-login without a circular import.
+let authToken: string | null = null;
+let onUnauthorized: (() => void) | null = null;
+
+export function setAuthToken(token: string | null) {
+	authToken = token;
+}
+export function getAuthToken(): string | null {
+	return authToken;
+}
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+	onUnauthorized = fn;
+}
+
 export function wsURL(): string {
 	const base = CORE_URL || window.location.origin;
 	const u = new URL(base);
 	u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
 	u.pathname = '/api/ws';
+	// Browsers can't set headers on a WebSocket handshake, so the token rides in
+	// the query string (localhost/same-origin; the server also accepts a bearer
+	// header on REST).
+	if (authToken) u.searchParams.set('token', authToken);
 	return u.toString();
 }
 
 async function req(path: string, init?: RequestInit): Promise<Response> {
-	const res = await fetch(`${CORE_URL}${path}`, {
-		headers: { 'Content-Type': 'application/json' },
-		...init
-	});
+	const headers = new Headers(init?.headers ?? { 'Content-Type': 'application/json' });
+	if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+	if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
+	const res = await fetch(`${CORE_URL}${path}`, { ...init, headers });
 	if (!res.ok) {
+		// A 401 means the session is gone/expired; let the auth store react
+		// (clear token, route to /login) unless we're already on an auth call.
+		if (res.status === 401 && !path.startsWith('/api/auth/')) {
+			onUnauthorized?.();
+		}
 		let msg = `${res.status} ${res.statusText}`;
 		try {
 			const body = await res.json();
@@ -257,3 +290,104 @@ export const getActivity = (environmentId?: string, limit = 100) => {
 	if (environmentId) params.set('environmentId', environmentId);
 	return json<Activity[]>(`/api/activity?${params}`);
 };
+
+// --- auth ---
+
+export const getAuthStatus = () => json<AuthStatus>('/api/auth/status');
+
+export const login = (username: string, password: string) =>
+	json<AuthResult>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+
+export const bootstrap = (username: string, password: string) =>
+	json<AuthResult>('/api/auth/bootstrap', { method: 'POST', body: JSON.stringify({ username, password }) });
+
+export const register = (username: string, password: string) =>
+	json<AuthResult>('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, password }) });
+
+export const logout = () => req('/api/auth/logout', { method: 'POST' });
+
+export const getMe = () => json<User>('/api/auth/me');
+
+// --- user management (admin) ---
+
+export interface UserInput {
+	username: string;
+	password: string;
+	role: UserRole;
+	access: EnvAccess[];
+}
+
+export interface UserUpdate {
+	role?: UserRole;
+	disabled?: boolean;
+	password?: string;
+	access?: EnvAccess[];
+}
+
+export const getUsers = () => json<User[]>('/api/users');
+
+export const createUser = (u: UserInput) =>
+	json<User>('/api/users', { method: 'POST', body: JSON.stringify(u) });
+
+export const updateUser = (id: string, u: UserUpdate) =>
+	json<User>(`/api/users/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(u) });
+
+export const deleteUser = (id: string) =>
+	req(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+export const getSignupSetting = () => json<{ enabled: boolean }>('/api/settings/signup');
+
+export const setSignupSetting = (enabled: boolean) =>
+	json<{ enabled: boolean }>('/api/settings/signup', { method: 'PUT', body: JSON.stringify({ enabled }) });
+
+// --- passkeys (WebAuthn) ---
+// Ceremony options are opaque WebAuthn JSON (a `publicKey` object plus a
+// server-issued `handle` echoed back on finish). The credential responses are
+// serialized by lib/webauthn.ts.
+
+export interface Passkey {
+	id: string;
+	name: string;
+	created: string;
+}
+
+interface CeremonyOptions {
+	publicKey: Record<string, unknown>;
+	handle: string;
+}
+
+export const passkeyRegisterBegin = () =>
+	json<CeremonyOptions>('/api/auth/passkey/register/begin', { method: 'POST' });
+
+export const passkeyRegisterFinish = (handle: string, name: string, credential: unknown) =>
+	json<Passkey>(
+		`/api/auth/passkey/register/finish?handle=${encodeURIComponent(handle)}&name=${encodeURIComponent(name)}`,
+		{ method: 'POST', body: JSON.stringify(credential) }
+	);
+
+export const passkeyLoginBegin = () =>
+	json<CeremonyOptions>('/api/auth/passkey/login/begin', { method: 'POST' });
+
+export const passkeyLoginFinish = (handle: string, credential: unknown) =>
+	json<AuthResult>(`/api/auth/passkey/login/finish?handle=${encodeURIComponent(handle)}`, {
+		method: 'POST',
+		body: JSON.stringify(credential)
+	});
+
+export const getPasskeys = () => json<Passkey[]>('/api/auth/passkeys');
+
+export const deletePasskey = (id: string) =>
+	req(`/api/auth/passkeys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+// --- Home Assistant control panel (admin) ---
+
+export const getHomeAssistant = () => json<HAStatus>('/api/admin/homeassistant');
+
+export const reloadHomeAssistant = () =>
+	req('/api/admin/homeassistant/reload', { method: 'POST' });
+
+export const updateHomeAssistant = (target: HAUpdateTarget, slug?: string) =>
+	req('/api/admin/homeassistant/update', {
+		method: 'POST',
+		body: JSON.stringify({ target, slug: slug ?? '' })
+	});

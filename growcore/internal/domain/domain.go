@@ -500,3 +500,65 @@ type Snapshot struct {
 	Time         time.Time         `json:"time"`
 	Environments []EnvironmentView `json:"environments"`
 }
+
+// --- Users & access control ---
+
+// UserRole is an account's global role. Note this is distinct from Role, which
+// is the fan/airflow role enum; a user account is either an administrator or a
+// normal user whose reach is scoped by per-environment access grants.
+type UserRole string
+
+const (
+	UserRoleAdmin UserRole = "admin"
+	UserRoleUser  UserRole = "user"
+)
+
+// AccessLevel is a user's granted access to a single environment.
+type AccessLevel string
+
+const (
+	// AccessRead lets a user view an environment; AccessWrite additionally lets
+	// them operate it (toggle devices, adjust targets, edit cycle & schedule).
+	AccessRead  AccessLevel = "read"
+	AccessWrite AccessLevel = "write"
+)
+
+// User is an account. The password hash and salt live only in the store and are
+// never serialised to the API (there are no JSON tags for them).
+type User struct {
+	ID       string    `json:"id"`
+	Username string    `json:"username"`
+	Role     UserRole  `json:"role"`
+	Disabled bool      `json:"disabled"`
+	Created  time.Time `json:"created"`
+
+	PasswordHash string `json:"-"`
+	PasswordSalt string `json:"-"`
+}
+
+// EnvAccess is a single per-environment grant for a user.
+type EnvAccess struct {
+	EnvironmentID string      `json:"environmentId"`
+	Access        AccessLevel `json:"access"`
+}
+
+// UserView is the API representation of a user: the account plus its grants,
+// and never any secret material.
+type UserView struct {
+	User
+	Access []EnvAccess `json:"access"`
+}
+
+// AllowsWrite reports whether an access level permits operating an environment.
+func (a AccessLevel) AllowsWrite() bool { return a == AccessWrite }
+
+// StoredCredential is a persisted WebAuthn passkey. Data is the opaque
+// JSON-encoded credential record owned by the api layer (the store treats it as
+// a blob so it needn't depend on the WebAuthn library).
+type StoredCredential struct {
+	ID      string    `json:"id"`
+	UserID  string    `json:"-"`
+	Name    string    `json:"name"`
+	Created time.Time `json:"created"`
+	Data    []byte    `json:"-"`
+}

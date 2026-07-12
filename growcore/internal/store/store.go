@@ -159,6 +159,41 @@ CREATE TABLE IF NOT EXISTS activity_log (
 );
 CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity_log (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_env_ts ON activity_log (environment_id, ts DESC);
+CREATE TABLE IF NOT EXISTS users (
+    id             TEXT PRIMARY KEY,
+    username       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash  TEXT NOT NULL,
+    password_salt  TEXT NOT NULL,
+    role           TEXT NOT NULL DEFAULT 'user',
+    disabled       INTEGER NOT NULL DEFAULT 0,
+    created        INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS env_access (
+    user_id        TEXT NOT NULL,
+    environment_id TEXT NOT NULL,
+    access         TEXT NOT NULL DEFAULT 'read',
+    PRIMARY KEY (user_id, environment_id)
+);
+CREATE INDEX IF NOT EXISTS idx_env_access_user ON env_access (user_id);
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash     TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL,
+    created        INTEGER NOT NULL DEFAULT 0,
+    expires        INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    id      TEXT PRIMARY KEY,           -- base64url(credential id)
+    user_id TEXT NOT NULL,
+    name    TEXT NOT NULL DEFAULT '',
+    created INTEGER NOT NULL DEFAULT 0,
+    data    TEXT NOT NULL               -- JSON-encoded webauthn.Credential record
+);
+CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_credentials (user_id);
 -- Superseded by the bindings model.
 DROP TABLE IF EXISTS channels;
 DROP TABLE IF EXISTS devices;
@@ -507,6 +542,7 @@ func (s *Store) DeleteEnvironment(id string) error {
 		return fmt.Errorf("environment %q not found", id)
 	}
 	_, _ = s.db.Exec(`DELETE FROM light_schedules WHERE environment_id=?`, id)
+	_, _ = s.db.Exec(`DELETE FROM env_access WHERE environment_id=?`, id)
 	return s.removeEnvironmentConfig(id)
 }
 

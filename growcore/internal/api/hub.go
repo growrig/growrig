@@ -49,8 +49,10 @@ func (h *Hub) remove(c *client) {
 }
 
 // serveWS upgrades the connection and streams snapshots until the client
-// disconnects. It sends the provided initial snapshot immediately.
-func (h *Hub) serveWS(c *websocket.Conn, initial domain.Snapshot) {
+// disconnects. It sends the provided initial snapshot immediately. Each frame
+// is filtered to the environments the connected user may view (all=true for
+// admins, streaming everything).
+func (h *Hub) serveWS(c *websocket.Conn, initial domain.Snapshot, allowed map[string]bool, all bool) {
 	ctx := context.Background()
 	cl := &client{send: make(chan domain.Snapshot, 4)}
 	h.add(cl)
@@ -75,7 +77,7 @@ func (h *Hub) serveWS(c *websocket.Conn, initial domain.Snapshot) {
 		case <-closed:
 			return
 		case snap := <-cl.send:
-			if err := writeSnap(ctx, c, snap); err != nil {
+			if err := writeSnap(ctx, c, filterSnapshot(snap, allowed, all)); err != nil {
 				return
 			}
 		}

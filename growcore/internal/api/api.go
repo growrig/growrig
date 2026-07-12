@@ -24,6 +24,7 @@ type Server struct {
 	hub         *Hub
 	adapterType string
 	static      http.Handler
+	passkeys    *ceremonyStore
 }
 
 func (s *Server) activity(envID, deviceID, level, eventType, message string) {
@@ -31,58 +32,93 @@ func (s *Server) activity(envID, deviceID, level, eventType, message string) {
 }
 
 func NewServer(st *store.Store, eng *control.Engine, adapter control.Adapter, hub *Hub, adapterType string, static http.Handler) *Server {
-	return &Server{store: st, engine: eng, adapter: adapter, hub: hub, adapterType: adapterType, static: static}
+	return &Server{store: st, engine: eng, adapter: adapter, hub: hub, adapterType: adapterType, static: static, passkeys: newCeremonyStore()}
 }
 
 // Handler builds the HTTP router.
+//
+// Access control: withAuth resolves the caller into the request context; each
+// protected route is wrapped by a require* guard. Public routes (health and the
+// unauthenticated auth endpoints) are registered raw so first-run setup and
+// login work before anyone is signed in.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+
+	// Public.
 	mux.HandleFunc("GET /api/health", s.health)
-	mux.HandleFunc("GET /api/info", s.getInfo)
-	mux.HandleFunc("GET /api/state", s.getState)
-	mux.HandleFunc("GET /api/roles", s.getRoles)
-	mux.HandleFunc("GET /api/phases", s.getPhases)
-	mux.HandleFunc("GET /api/catalog", s.getCatalog)
-	mux.HandleFunc("GET /api/discovery", s.getDiscovery)
-	mux.HandleFunc("POST /api/demo", s.postDemo)
-	mux.HandleFunc("GET /api/activity", s.getActivity)
+	mux.HandleFunc("GET /api/auth/status", s.getAuthStatus)
+	mux.HandleFunc("POST /api/auth/bootstrap", s.bootstrap)
+	mux.HandleFunc("POST /api/auth/login", s.login)
+	mux.HandleFunc("POST /api/auth/register", s.register)
+	mux.HandleFunc("POST /api/auth/passkey/login/begin", s.passkeyLoginBegin)
+	mux.HandleFunc("POST /api/auth/passkey/login/finish", s.passkeyLoginFinish)
 
-	mux.HandleFunc("GET /api/environments", s.getEnvironments)
-	mux.HandleFunc("POST /api/environments", s.createEnvironment)
-	mux.HandleFunc("PUT /api/environments/{id}", s.updateEnvironment)
-	mux.HandleFunc("DELETE /api/environments/{id}", s.deleteEnvironment)
-	mux.HandleFunc("GET /api/environments/{id}/config", s.getEnvironmentConfig)
-	mux.HandleFunc("PUT /api/environments/{id}/config", s.putEnvironmentConfig)
-	mux.HandleFunc("PUT /api/environments/{id}/targets", s.putTargets)
-	mux.HandleFunc("GET /api/environments/{id}/history", s.getHistory)
-	mux.HandleFunc("GET /api/environments/{id}/device-history", s.getDeviceHistory)
-	mux.HandleFunc("GET /api/environments/{id}/sensor-history", s.getSensorHistory)
-	mux.HandleFunc("GET /api/environments/{id}/weather-history", s.getWeatherHistory)
-	mux.HandleFunc("PUT /api/environments/{id}/cycle", s.putCycle)
-	mux.HandleFunc("DELETE /api/environments/{id}/cycle", s.deleteCycle)
-	mux.HandleFunc("GET /api/environments/{id}/schedule", s.getSchedule)
-	mux.HandleFunc("PUT /api/environments/{id}/schedule", s.putSchedule)
-	mux.HandleFunc("GET /api/lighting/defaults", s.getLightingDefaults)
+	// Authenticated (any signed-in user); list responses are filtered per-user.
+	mux.HandleFunc("POST /api/auth/logout", s.requireAuth(s.logout))
+	mux.HandleFunc("GET /api/auth/me", s.requireAuth(s.me))
+	mux.HandleFunc("POST /api/auth/passkey/register/begin", s.requireAuth(s.passkeyRegisterBegin))
+	mux.HandleFunc("POST /api/auth/passkey/register/finish", s.requireAuth(s.passkeyRegisterFinish))
+	mux.HandleFunc("GET /api/auth/passkeys", s.requireAuth(s.listPasskeys))
+	mux.HandleFunc("DELETE /api/auth/passkeys/{id}", s.requireAuth(s.deletePasskey))
+	mux.HandleFunc("GET /api/info", s.requireAuth(s.getInfo))
+	mux.HandleFunc("GET /api/state", s.requireAuth(s.getState))
+	mux.HandleFunc("GET /api/roles", s.requireAuth(s.getRoles))
+	mux.HandleFunc("GET /api/phases", s.requireAuth(s.getPhases))
+	mux.HandleFunc("GET /api/activity", s.requireAuth(s.getActivity))
+	mux.HandleFunc("GET /api/environments", s.requireAuth(s.getEnvironments))
+	mux.HandleFunc("GET /api/bindings", s.requireAuth(s.getBindings))
+	mux.HandleFunc("GET /api/lighting/defaults", s.requireAuth(s.getLightingDefaults))
+	mux.HandleFunc("GET /api/locations", s.requireAuth(s.getLocations))
+	mux.HandleFunc("GET /api/weather", s.requireAuth(s.getWeather))
 
-	mux.HandleFunc("GET /api/locations", s.getLocations)
-	mux.HandleFunc("POST /api/locations", s.createLocation)
-	mux.HandleFunc("PUT /api/locations/{id}", s.updateLocation)
-	mux.HandleFunc("DELETE /api/locations/{id}", s.deleteLocation)
-	mux.HandleFunc("GET /api/geocode", s.geocode)
-	mux.HandleFunc("GET /api/weather", s.getWeather)
+	// Per-environment read.
+	mux.HandleFunc("GET /api/environments/{id}/history", s.requireEnvRead(s.getHistory))
+	mux.HandleFunc("GET /api/environments/{id}/device-history", s.requireEnvRead(s.getDeviceHistory))
+	mux.HandleFunc("GET /api/environments/{id}/sensor-history", s.requireEnvRead(s.getSensorHistory))
+	mux.HandleFunc("GET /api/environments/{id}/weather-history", s.requireEnvRead(s.getWeatherHistory))
+	mux.HandleFunc("GET /api/environments/{id}/schedule", s.requireEnvRead(s.getSchedule))
 
-	mux.HandleFunc("GET /api/bindings", s.getBindings)
-	mux.HandleFunc("POST /api/bindings", s.createBinding)
-	mux.HandleFunc("PUT /api/bindings/{id}", s.updateBinding)
-	mux.HandleFunc("DELETE /api/bindings/{id}", s.deleteBinding)
-	mux.HandleFunc("PUT /api/bindings/{id}/switch", s.putSwitch)
+	// Per-environment write (operate the grow).
+	mux.HandleFunc("PUT /api/environments/{id}/targets", s.requireEnvWrite(s.putTargets))
+	mux.HandleFunc("PUT /api/environments/{id}/cycle", s.requireEnvWrite(s.putCycle))
+	mux.HandleFunc("DELETE /api/environments/{id}/cycle", s.requireEnvWrite(s.deleteCycle))
+	mux.HandleFunc("PUT /api/environments/{id}/schedule", s.requireEnvWrite(s.putSchedule))
+	mux.HandleFunc("PUT /api/bindings/{id}/switch", s.requireEnvWriteForBinding(s.putSwitch))
 
+	// Admin only (configuration & user management).
+	mux.HandleFunc("GET /api/catalog", s.requireAdmin(s.getCatalog))
+	mux.HandleFunc("GET /api/discovery", s.requireAdmin(s.getDiscovery))
+	mux.HandleFunc("POST /api/demo", s.requireAdmin(s.postDemo))
+	mux.HandleFunc("GET /api/geocode", s.requireAdmin(s.geocode))
+	mux.HandleFunc("POST /api/environments", s.requireAdmin(s.createEnvironment))
+	mux.HandleFunc("PUT /api/environments/{id}", s.requireAdmin(s.updateEnvironment))
+	mux.HandleFunc("DELETE /api/environments/{id}", s.requireAdmin(s.deleteEnvironment))
+	mux.HandleFunc("GET /api/environments/{id}/config", s.requireAdmin(s.getEnvironmentConfig))
+	mux.HandleFunc("PUT /api/environments/{id}/config", s.requireAdmin(s.putEnvironmentConfig))
+	mux.HandleFunc("POST /api/locations", s.requireAdmin(s.createLocation))
+	mux.HandleFunc("PUT /api/locations/{id}", s.requireAdmin(s.updateLocation))
+	mux.HandleFunc("DELETE /api/locations/{id}", s.requireAdmin(s.deleteLocation))
+	mux.HandleFunc("POST /api/bindings", s.requireAdmin(s.createBinding))
+	mux.HandleFunc("PUT /api/bindings/{id}", s.requireAdmin(s.updateBinding))
+	mux.HandleFunc("DELETE /api/bindings/{id}", s.requireAdmin(s.deleteBinding))
+	mux.HandleFunc("GET /api/users", s.requireAdmin(s.getUsers))
+	mux.HandleFunc("POST /api/users", s.requireAdmin(s.createUser))
+	mux.HandleFunc("PUT /api/users/{id}", s.requireAdmin(s.updateUser))
+	mux.HandleFunc("DELETE /api/users/{id}", s.requireAdmin(s.deleteUser))
+	mux.HandleFunc("GET /api/settings/signup", s.requireAdmin(s.getSignupSetting))
+	mux.HandleFunc("PUT /api/settings/signup", s.requireAdmin(s.setSignupSetting))
+	mux.HandleFunc("GET /api/admin/homeassistant", s.requireAdmin(s.getHomeAssistant))
+	mux.HandleFunc("POST /api/admin/homeassistant/reload", s.requireAdmin(s.reloadHomeAssistant))
+	mux.HandleFunc("POST /api/admin/homeassistant/update", s.requireAdmin(s.updateHomeAssistant))
+
+	// The WebSocket authenticates from a ?token= query param (browsers cannot
+	// set headers on a WebSocket handshake).
 	mux.HandleFunc("GET /api/ws", s.ws)
 
 	if s.static != nil {
 		mux.Handle("/", s.static)
 	}
-	return withCORS(mux)
+	return withCORS(s.withAuth(mux))
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +130,9 @@ func (s *Server) getInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getState(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.engine.Latest())
+	u, _ := currentUser(r)
+	allowed, all := s.accessibleEnvIDs(u)
+	writeJSON(w, http.StatusOK, filterSnapshot(s.engine.Latest(), allowed, all))
 }
 
 func (s *Server) getActivity(w http.ResponseWriter, r *http.Request) {
@@ -104,10 +142,29 @@ func (s *Server) getActivity(w http.ResponseWriter, r *http.Request) {
 			limit = parsed
 		}
 	}
-	events, err := s.store.Activities(r.URL.Query().Get("environmentId"), limit)
+	envParam := r.URL.Query().Get("environmentId")
+	u, _ := currentUser(r)
+	allowed, all := s.accessibleEnvIDs(u)
+	// A non-admin asking for a specific environment must be able to see it.
+	if !all && envParam != "" && !allowed[envParam] {
+		writeJSON(w, http.StatusForbidden, errBody("you do not have access to this environment"))
+		return
+	}
+	events, err := s.store.Activities(envParam, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
+	}
+	// Without an environment filter, non-admins only see events for the
+	// environments they can access (env-less config events stay admin-only).
+	if !all && envParam == "" {
+		filtered := make([]domain.Activity, 0, len(events))
+		for _, e := range events {
+			if e.EnvironmentID != "" && allowed[e.EnvironmentID] {
+				filtered = append(filtered, e)
+			}
+		}
+		events = filtered
 	}
 	if events == nil {
 		events = []domain.Activity{}
@@ -140,6 +197,16 @@ func (s *Server) getEnvironments(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
+	}
+	u, _ := currentUser(r)
+	if allowed, all := s.accessibleEnvIDs(u); !all {
+		filtered := make([]domain.Environment, 0, len(envs))
+		for _, e := range envs {
+			if allowed[e.ID] {
+				filtered = append(filtered, e)
+			}
+		}
+		envs = filtered
 	}
 	if envs == nil {
 		envs = []domain.Environment{}
@@ -262,6 +329,16 @@ func (s *Server) getBindings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	u, _ := currentUser(r)
+	if allowed, all := s.accessibleEnvIDs(u); !all {
+		filtered := make([]domain.Binding, 0, len(bindings))
+		for _, b := range bindings {
+			if allowed[b.EnvironmentID] {
+				filtered = append(filtered, b)
+			}
+		}
+		bindings = filtered
+	}
 	if bindings == nil {
 		bindings = []domain.Binding{}
 	}
@@ -321,12 +398,20 @@ func (s *Server) putSwitch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
+	// The WebSocket authenticates from ?token= (set by the client) since the
+	// browser cannot attach an Authorization header to the handshake.
+	u := s.userFromToken(bearerToken(r))
+	if u == nil {
+		writeJSON(w, http.StatusUnauthorized, errBody("authentication required"))
+		return
+	}
+	allowed, all := s.accessibleEnvIDs(u)
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
 	defer c.CloseNow()
-	s.hub.serveWS(c, s.engine.Latest())
+	s.hub.serveWS(c, filterSnapshot(s.engine.Latest(), allowed, all), allowed, all)
 }
 
 func validRole(role domain.Role) bool {
@@ -356,7 +441,7 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

@@ -79,7 +79,7 @@
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
 		<div class="flex items-center gap-3">
-			<h1 class="text-2xl font-semibold">Debug</h1>
+			<h2 class="text-lg font-semibold">Debug</h2>
 			<span class="flex items-center gap-2 rounded-full bg-rig-800 px-3 py-1 text-xs text-rig-300">
 				<span class="h-2 w-2 rounded-full {statusMeta[live.status].dot}"></span>
 				{statusMeta[live.status].label}
@@ -96,9 +96,9 @@
 	</section>
 
 	<section class="overflow-hidden rounded-xl border border-rig-800 bg-rig-900/40">
-		<h2 class="border-b border-rig-800 px-5 py-3 text-sm font-semibold uppercase tracking-wide text-rig-400">
+		<h3 class="border-b border-rig-800 px-5 py-3 text-sm font-semibold uppercase tracking-wide text-rig-400">
 			Runtime
-		</h2>
+		</h3>
 		<dl class="divide-y divide-rig-800/70">
 			{#each rows as row (row.k)}
 				<div class="flex items-center justify-between gap-4 px-5 py-2.5 text-sm">
@@ -111,7 +111,7 @@
 
 	<section class="overflow-hidden rounded-xl border border-rig-800 bg-rig-900/40">
 		<div class="flex items-center justify-between border-b border-rig-800 px-5 py-3">
-			<h2 class="text-sm font-semibold uppercase tracking-wide text-rig-400">Live snapshot</h2>
+			<h3 class="text-sm font-semibold uppercase tracking-wide text-rig-400">Live snapshot</h3>
 			<Button variant="ghost" size="sm" onclick={copyJson}>{copied ? 'Copied ✓' : 'Copy JSON'}</Button>
 		</div>
 		<pre class="max-h-[28rem] overflow-auto p-4 text-xs leading-relaxed text-rig-200"><code>{snapshotJson}</code></pre>

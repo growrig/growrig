@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { live } from '$lib/live.svelte';
+	import { auth } from '$lib/auth.svelte';
 	import { history, historyRange, deviceHistory, setSwitch, getPhases, getLightingDefaults, getLocations, weather } from '$lib/api';
 	import type { DeviceSeries, Location, Phase, PhotoperiodDefaults, Reading, Weather } from '$lib/types';
 	import { resolveLocationId } from '$lib/location';
@@ -28,6 +29,10 @@
 
 	const id = $derived(page.params.id);
 	const env = $derived(live.snapshot?.environments?.find((e) => e.id === id));
+	// Write access = operate the grow (toggle devices, edit cycle/schedule).
+	// Adding/removing devices and editing settings is admin-only.
+	const canWrite = $derived(!!id && auth.canWrite(id));
+	const isAdmin = $derived(auth.isAdmin);
 
 	const fans = $derived(env?.controls?.filter((c) => c.kind === 'fan') ?? []);
 	const fanSections = $derived([
@@ -147,9 +152,11 @@
 					<span class="hidden text-sm text-rig-400 sm:inline">target {env.targetTempC}°C · {env.targetHumidity}% RH{#if env.targetCO2 > 0} · {env.targetCO2} ppm{/if}</span>
 				{/if}
 				<SensorsDialog sensors={env.sensors ?? []} />
-				<a href="/env/{id}/settings" class="inline-flex items-center gap-1.5 rounded-md border border-rig-700 px-3 py-1.5 text-sm text-rig-300 transition-colors hover:border-rig-500 hover:text-rig-100">
-					<Settings size={15} /> Settings & Devices
-				</a>
+				{#if isAdmin}
+					<a href="/env/{id}/settings" class="inline-flex items-center gap-1.5 rounded-md border border-rig-700 px-3 py-1.5 text-sm text-rig-300 transition-colors hover:border-rig-500 hover:text-rig-100">
+						<Settings size={15} /> Settings & Devices
+					</a>
+				{/if}
 			</div>
 		</div>
 
@@ -192,6 +199,7 @@
 				cycle={env.cycle}
 				schedule={env.schedule}
 				hasPrimaryLight={!!primaryLight}
+				canEdit={canWrite}
 				{phases}
 				defaults={lightingDefaults}
 			/>
@@ -255,12 +263,14 @@
 								<div class="text-xs text-rig-400">A grow box needs a light to run its photoperiod. Assign one to get started.</div>
 							</div>
 						</div>
-						<a
-							href="/env/{id}/settings#devices"
-							class="inline-flex items-center gap-1.5 rounded-md bg-rig-500 px-4 py-1.5 text-sm font-medium text-rig-950 transition-colors hover:bg-rig-400"
-						>
-							<Lightbulb size={15} /> Assign a light
-						</a>
+						{#if isAdmin}
+							<a
+								href="/env/{id}/settings#devices"
+								class="inline-flex items-center gap-1.5 rounded-md bg-rig-500 px-4 py-1.5 text-sm font-medium text-rig-950 transition-colors hover:bg-rig-400"
+							>
+								<Lightbulb size={15} /> Assign a light
+							</a>
+						{/if}
 					</div>
 				{:else}
 					<div class="grid gap-3 sm:grid-cols-2">
@@ -292,7 +302,9 @@
 										<span class="text-xs font-medium tabular-nums {light.on ? 'text-leaf' : 'text-rig-400'}">
 											{light.on ? 'On' : 'Off'}
 										</span>
-										<Switch checked={light.on} onCheckedChange={(v) => toggleLight(light.id, v)} />
+										{#if canWrite}
+											<Switch checked={light.on} onCheckedChange={(v) => toggleLight(light.id, v)} />
+										{/if}
 										<button
 											type="button"
 											onclick={() => openMetric({ kind: 'device', bindingId: light.id, metric: 'power' }, `${light.name} · power`, 'W')}

@@ -260,3 +260,67 @@ export interface Activity {
 export interface Info {
 	adapter: string;
 }
+
+// --- users & auth ---
+
+export type UserRole = 'admin' | 'user';
+export type AccessLevel = 'read' | 'write';
+
+export interface EnvAccess {
+	environmentId: string;
+	access: AccessLevel;
+}
+
+export interface User {
+	id: string;
+	username: string;
+	role: UserRole;
+	disabled: boolean;
+	created: string;
+	/** Per-environment grants; empty/omitted for admins (implicit full access). */
+	access: EnvAccess[];
+}
+
+export interface AuthStatus {
+	needsSetup: boolean;
+	signupEnabled: boolean;
+}
+
+export interface AuthResult {
+	token: string;
+	user: User;
+}
+
+// --- Home Assistant appliance status (admin control panel) ---
+
+export interface HAComponent {
+	version: string;
+	versionLatest: string;
+	updateAvailable: boolean;
+}
+
+export interface HAAddon {
+	slug: string;
+	name: string;
+	version: string;
+	versionLatest: string;
+	updateAvailable: boolean;
+}
+
+export interface HASupervisor {
+	/** True only when GrowRig runs as a HAOS add-on (Supervisor reachable). */
+	available: boolean;
+	core: HAComponent;
+	os: HAComponent;
+	supervisor: HAComponent;
+	addons: HAAddon[];
+	error?: string;
+}
+
+export interface HAStatus {
+	adapter: string; // 'simulator' | 'homeassistant'
+	health: string; // 'online' | 'stale' | 'offline'
+	supervisor: HASupervisor;
+}
+
+export type HAUpdateTarget = 'core' | 'os' | 'supervisor' | 'addon';
