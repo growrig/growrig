@@ -5,6 +5,8 @@
 	import { goto } from '$app/navigation';
 	import { live } from '$lib/live.svelte';
 	import { auth } from '$lib/auth.svelte';
+	import { preferences, onPreferencesUpdated } from '$lib/preferences.svelte';
+	import { fmtClock } from '$lib/datetime';
 	import { Button } from '$lib/components/ui';
 	import Sprout from '@lucide/svelte/icons/sprout';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
@@ -13,6 +15,8 @@
 	import LogOut from '@lucide/svelte/icons/log-out';
 
 	let { children } = $props();
+	let clockNow = $state(new Date());
+	const instanceTime = $derived(fmtClock(clockNow));
 
 	// Routes that render without the app chrome and without requiring a session.
 	const authRoutes = ['/login', '/setup'];
@@ -21,6 +25,17 @@
 	onMount(() => {
 		auth.init();
 		return () => live.stop();
+	});
+	onMount(() => {
+		const timer = setInterval(() => (clockNow = new Date()), 1000);
+		const stop = onPreferencesUpdated((p) => preferences.apply(p));
+		return () => {
+			clearInterval(timer);
+			stop();
+		};
+	});
+	$effect(() => {
+		if (auth.phase === 'authed') void preferences.load();
 	});
 
 	// Route guard: keep the URL consistent with the auth phase.
@@ -106,9 +121,10 @@
 					{/each}
 				</nav>
 				<div class="ml-auto flex items-center gap-4">
+					<div class="hidden text-sm tabular-nums text-rig-400 sm:block" title="{preferences.timezone} · {preferences.locale}">{instanceTime}</div>
 					<div class="flex items-center gap-2 text-sm text-rig-300">
 						<span class="h-2 w-2 rounded-full {statusMeta[live.status].dot}"></span>
-						{statusMeta[live.status].label}
+						<span class="tabular-nums">{live.status === 'live' ? (live.latencyMs == null ? '— ms' : `${live.latencyMs} ms`) : statusMeta[live.status].label}</span>
 					</div>
 					{#if auth.user}
 						<div class="flex items-center gap-2 border-l border-rig-800 pl-4">

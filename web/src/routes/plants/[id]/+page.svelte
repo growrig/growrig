@@ -5,6 +5,7 @@
 	import { getPlant, getEnvironments, movePlant, updatePlant, harvestPlant, removePlant } from '$lib/api';
 	import type { Environment, PlantView } from '$lib/types';
 	import { titleCase, daysSince } from '$lib/format';
+	import { fmtDate } from '$lib/datetime';
 	import { Button, Dialog, Select } from '$lib/components/ui';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import MapPin from '@lucide/svelte/icons/map-pin';
@@ -163,8 +164,8 @@
 						<li class="flex items-center justify-between rounded-lg border border-rig-800 bg-rig-950/40 px-4 py-2 text-sm">
 							<span class="font-medium">{p.environmentName || p.environmentId}</span>
 							<span class="text-rig-400">
-								{new Date(p.startedAt).toLocaleDateString()} →
-								{#if p.endedAt}{new Date(p.endedAt).toLocaleDateString()}{:else}<span class="text-leaf">current</span>{/if}
+								{fmtDate(p.startedAt)} →
+								{#if p.endedAt}{fmtDate(p.endedAt)}{:else}<span class="text-leaf">current</span>{/if}
 							</span>
 						</li>
 					{/each}

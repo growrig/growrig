@@ -123,6 +123,10 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 // --- info, catalog & discovery ---
 
 export const getInfo = () => json<Info>('/api/info');
+export interface Preferences { version: number; timezone: string; locale: string }
+export const getPreferences = () => json<Preferences>('/api/preferences');
+export const updatePreferences = (prefs: Pick<Preferences, 'timezone' | 'locale'>) =>
+	json<Preferences>('/api/preferences', { method: 'PUT', body: JSON.stringify(prefs) });
 /** Current live snapshot over REST — used for the initial paint before the
  *  WebSocket feed takes over. */
 export const getState = () => json<Snapshot>('/api/state');

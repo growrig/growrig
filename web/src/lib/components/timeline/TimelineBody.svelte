@@ -2,6 +2,7 @@
 	import { getContext } from 'svelte';
 	import { line as d3line, curveMonotoneX } from 'd3-shape';
 	import type { Interval } from '$lib/photoperiod';
+	import { fmtTimelineDay, fmtTimelineHour } from '$lib/datetime';
 
 	export interface SeriesDef {
 		key: string;
@@ -170,9 +171,7 @@
 			out.push({
 				x: $xScale(t),
 				major: midnight,
-				label: midnight
-					? dt.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
-					: `${String(dt.getHours()).padStart(2, '0')}:00`
+				label: midnight ? fmtTimelineDay(t) : fmtTimelineHour(t)
 			});
 		}
 		return out;

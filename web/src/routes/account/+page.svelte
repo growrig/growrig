@@ -7,6 +7,7 @@
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Shield from '@lucide/svelte/icons/shield';
+	import { fmtDate } from '$lib/datetime';
 
 	let passkeys = $state<Passkey[]>([]);
 	let loading = $state(true);
@@ -54,11 +55,6 @@
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to remove passkey';
 		}
-	}
-
-	function fmtDate(iso: string): string {
-		const d = new Date(iso);
-		return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 	}
 
 	const field =

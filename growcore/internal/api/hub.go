@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ type Hub struct {
 
 type client struct {
 	send chan domain.Snapshot
+	pong chan int64
 }
 
 func NewHub() *Hub { return &Hub{clients: map[*client]struct{}{}} }
@@ -54,7 +56,7 @@ func (h *Hub) remove(c *client) {
 // admins, streaming everything).
 func (h *Hub) serveWS(c *websocket.Conn, initial domain.Snapshot, allowed map[string]bool, all bool) {
 	ctx := context.Background()
-	cl := &client{send: make(chan domain.Snapshot, 4)}
+	cl := &client{send: make(chan domain.Snapshot, 4), pong: make(chan int64, 2)}
 	h.add(cl)
 	defer h.remove(cl)
 
@@ -63,8 +65,19 @@ func (h *Hub) serveWS(c *websocket.Conn, initial domain.Snapshot, allowed map[st
 	go func() {
 		defer close(closed)
 		for {
-			if _, _, err := c.Read(ctx); err != nil {
+			_, raw, err := c.Read(ctx)
+			if err != nil {
 				return
+			}
+			var msg struct {
+				Type string `json:"type"`
+				ID   int64  `json:"id"`
+			}
+			if json.Unmarshal(raw, &msg) == nil && msg.Type == "ping" {
+				select {
+				case cl.pong <- msg.ID:
+				default:
+				}
 			}
 		}
 	}()
@@ -80,8 +93,18 @@ func (h *Hub) serveWS(c *websocket.Conn, initial domain.Snapshot, allowed map[st
 			if err := writeSnap(ctx, c, filterSnapshot(snap, allowed, all)); err != nil {
 				return
 			}
+		case id := <-cl.pong:
+			if err := writeMessage(ctx, c, map[string]any{"type": "pong", "id": id}); err != nil {
+				return
+			}
 		}
 	}
+}
+
+func writeMessage(ctx context.Context, c *websocket.Conn, message any) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return wsjson.Write(ctx, c, message)
 }
 
 func writeSnap(ctx context.Context, c *websocket.Conn, snap domain.Snapshot) error {

@@ -10,6 +10,7 @@
 		Weather
 	} from '$lib/types';
 	import { lightIntervals } from '$lib/photoperiod';
+	import { fmtChartHourMinute } from '$lib/datetime';
 	import TimelineBody, { type SeriesDef, type HoverInfo } from './timeline/TimelineBody.svelte';
 
 	interface Props {
@@ -141,7 +142,7 @@
 					style={tipStyle}
 				>
 					<div class="mb-1 flex items-center justify-between gap-3 text-rig-400">
-						<span>{new Date(hover.time).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+						<span>{fmtChartHourMinute(hover.time)}</span>
 						<span class="inline-flex items-center gap-1" style="color:{hover.lit ? litColor : 'var(--color-rig-500)'}">
 							<span class="inline-block h-2 w-2 rounded-full" style="background:{hover.lit ? litColor : 'var(--color-rig-600)'}"></span>
 							{hover.lit ? 'lit' : 'dark'}

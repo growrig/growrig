@@ -19,10 +19,13 @@ class LiveState {
 	lastSource = $state<'rest' | 'ws' | null>(null);
 	/** Last connection error text, surfaced on the debug page. */
 	lastError = $state<string | null>(null);
+	/** Application-level round-trip time over the active WebSocket. */
+	latencyMs = $state<number | null>(null);
 
 	#ws: WebSocket | null = null;
 	#retry = 0;
 	#timer: ReturnType<typeof setTimeout> | null = null;
+	#pingTimer: ReturnType<typeof setInterval> | null = null;
 	#stopped = false;
 
 	start() {
@@ -36,12 +39,14 @@ class LiveState {
 	stop() {
 		this.#stopped = true;
 		if (this.#timer) clearTimeout(this.#timer);
+		if (this.#pingTimer) clearInterval(this.#pingTimer);
 		this.#ws?.close();
 		this.#ws = null;
 		// Drop cached state so a signed-out (or switched) user never sees the
 		// previous session's environments.
 		this.snapshot = null;
 		this.status = 'connecting';
+		this.latencyMs = null;
 		this.lastSource = null;
 	}
 
@@ -73,21 +78,36 @@ class LiveState {
 			this.#retry = 0;
 			this.status = 'live';
 			this.lastError = null;
+			this.#sendPing();
+			if (this.#pingTimer) clearInterval(this.#pingTimer);
+			this.#pingTimer = setInterval(() => this.#sendPing(), 5000);
 		};
 		ws.onmessage = (ev) => {
 			try {
-				this.#apply(JSON.parse(ev.data) as Snapshot, 'ws');
+				const message = JSON.parse(ev.data);
+				if (message?.type === 'pong' && typeof message.id === 'number') {
+					this.latencyMs = Math.max(0, Date.now() - message.id);
+					return;
+				}
+				this.#apply(message as Snapshot, 'ws');
 				this.status = 'live';
 			} catch {
 				/* ignore malformed frame */
 			}
 		};
 		ws.onclose = () => {
+			if (this.#pingTimer) clearInterval(this.#pingTimer);
+			this.#pingTimer = null;
 			this.#ws = null;
 			this.status = 'offline';
+			this.latencyMs = null;
 			this.#scheduleReconnect();
 		};
 		ws.onerror = () => ws.close();
+	}
+
+	#sendPing() {
+		if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify({ type: 'ping', id: Date.now() }));
 	}
 
 	#scheduleReconnect() {

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -74,7 +75,7 @@ func main() {
 
 	cameraRecorder := camera.New(st, cfg.Storage.Path)
 	go cameraRecorder.Run(ctx)
-	apiServer := api.NewServer(st, engine, adapter, hub, string(cfg.Adapter.Type), static, cameraRecorder)
+	apiServer := api.NewServer(st, engine, adapter, hub, string(cfg.Adapter.Type), static, cameraRecorder, filepath.Join(filepath.Dir(cfg.Storage.Path), "preferences.yaml"))
 	go apiServer.PollWeather(ctx)
 
 	srv := &http.Server{

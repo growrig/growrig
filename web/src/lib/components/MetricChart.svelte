@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { line as d3line, curveMonotoneX } from 'd3-shape';
+	import { fmtChartHour, fmtChartHourMinute } from '$lib/datetime';
 
 	export interface ChartLine {
 		id: string;
@@ -105,7 +106,7 @@
 			const t = a + ((b - a) * i) / n;
 			out.push({
 				x: x(t),
-				label: new Date(t).toLocaleString(undefined, { weekday: 'short', hour: '2-digit' })
+				label: fmtChartHour(t)
 			});
 		}
 		return out;
@@ -224,7 +225,7 @@
 
 	{#if hoverT != null}
 		<div class="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 rounded-md border border-rig-700 bg-rig-900/95 px-3 py-1.5 text-xs shadow-lg backdrop-blur">
-			<div class="mb-1 text-rig-400">{new Date(hoverT).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+			<div class="mb-1 text-rig-400">{fmtChartHourMinute(hoverT)}</div>
 			{#each lines as l (l.id)}
 				{@const v = valueAt(l, hoverT)}
 				<div class="flex items-center justify-between gap-3">

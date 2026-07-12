@@ -18,6 +18,7 @@
 	} from '$lib/api';
 	import type { Environment, GrowDetail, PlantDetail, StagePresets, TrackingMode } from '$lib/types';
 	import { titleCase, daysSince } from '$lib/format';
+	import { fmtDate } from '$lib/datetime';
 	import GrowFormModal from '$lib/components/GrowFormModal.svelte';
 	import { Button, Dialog, Select } from '$lib/components/ui';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
@@ -211,7 +212,7 @@
 				</div>
 				<p class="mt-1 text-sm text-rig-400">
 					{titleCase(grow.species) || 'No species set'}
-					· started {new Date(grow.startedAt).toLocaleDateString()} (day {grow.totalDays})
+					· started {fmtDate(grow.startedAt)} (day {grow.totalDays})
 				</p>
 			</div>
 			{#if isAdmin}

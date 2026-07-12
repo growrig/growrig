@@ -22,22 +22,23 @@ import (
 )
 
 type Server struct {
-	store       *store.Store
-	engine      *control.Engine
-	adapter     control.Adapter
-	hub         *Hub
-	adapterType string
-	static      http.Handler
-	passkeys    *ceremonyStore
-	cameras     *camera.Recorder
+	store           *store.Store
+	engine          *control.Engine
+	adapter         control.Adapter
+	hub             *Hub
+	adapterType     string
+	static          http.Handler
+	passkeys        *ceremonyStore
+	cameras         *camera.Recorder
+	preferencesPath string
 }
 
 func (s *Server) activity(envID, deviceID, level, eventType, message string) {
 	_ = s.store.AddActivity(domain.Activity{EnvironmentID: envID, DeviceID: deviceID, Level: level, Type: eventType, Message: message})
 }
 
-func NewServer(st *store.Store, eng *control.Engine, adapter control.Adapter, hub *Hub, adapterType string, static http.Handler, cameras *camera.Recorder) *Server {
-	return &Server{store: st, engine: eng, adapter: adapter, hub: hub, adapterType: adapterType, static: static, passkeys: newCeremonyStore(), cameras: cameras}
+func NewServer(st *store.Store, eng *control.Engine, adapter control.Adapter, hub *Hub, adapterType string, static http.Handler, cameras *camera.Recorder, preferencesPath string) *Server {
+	return &Server{store: st, engine: eng, adapter: adapter, hub: hub, adapterType: adapterType, static: static, passkeys: newCeremonyStore(), cameras: cameras, preferencesPath: preferencesPath}
 }
 
 // Handler builds the HTTP router.
@@ -66,6 +67,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/auth/passkeys", s.requireAuth(s.listPasskeys))
 	mux.HandleFunc("DELETE /api/auth/passkeys/{id}", s.requireAuth(s.deletePasskey))
 	mux.HandleFunc("GET /api/info", s.requireAuth(s.getInfo))
+	mux.HandleFunc("GET /api/preferences", s.requireAuth(s.getPreferences))
 	mux.HandleFunc("GET /api/state", s.requireAuth(s.getState))
 	mux.HandleFunc("GET /api/roles", s.requireAuth(s.getRoles))
 	mux.HandleFunc("GET /api/stage-presets", s.requireAuth(s.getStagePresets))
@@ -135,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/users/{id}", s.requireAdmin(s.deleteUser))
 	mux.HandleFunc("GET /api/settings/signup", s.requireAdmin(s.getSignupSetting))
 	mux.HandleFunc("PUT /api/settings/signup", s.requireAdmin(s.setSignupSetting))
+	mux.HandleFunc("PUT /api/preferences", s.requireAdmin(s.putPreferences))
 	mux.HandleFunc("GET /api/admin/homeassistant", s.requireAdmin(s.getHomeAssistant))
 	mux.HandleFunc("POST /api/admin/homeassistant/reload", s.requireAdmin(s.reloadHomeAssistant))
 	mux.HandleFunc("POST /api/admin/homeassistant/update", s.requireAdmin(s.updateHomeAssistant))

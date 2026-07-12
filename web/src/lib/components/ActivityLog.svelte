@@ -6,6 +6,7 @@
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import Info from '@lucide/svelte/icons/info';
+	import { fmtDateTime } from '$lib/datetime';
 
 	interface Props { environmentId?: string; limit?: number; showEnvironment?: boolean }
 	let { environmentId, limit = 20, showEnvironment = false }: Props = $props();
@@ -20,7 +21,7 @@
 	}
 	onMount(() => { reload(); const timer = setInterval(reload, 5000); return () => clearInterval(timer); });
 	const envName = (id?: string) => environments.find((env) => env.id === id)?.name ?? id ?? 'System';
-	const time = (value: string) => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+	const time = (value: string) => fmtDateTime(value);
 </script>
 
 {#if loading}

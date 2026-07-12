@@ -4,6 +4,7 @@
 	import { getInfo, CORE_URL, wsURL } from '$lib/api';
 	import StatTile from '$lib/components/StatTile.svelte';
 	import { Button } from '$lib/components/ui';
+	import { fmtDateTime } from '$lib/datetime';
 
 	let adapter = $state<string>('…');
 	let infoError = $state<string | null>(null);
@@ -68,7 +69,7 @@
 	const rows = $derived([
 		{ k: 'Connection', v: statusMeta[live.status].label },
 		{ k: 'Last snapshot', v: `${fmtAge(ageMs)} · via ${live.lastSource ?? '—'}` },
-		{ k: 'Snapshot time', v: snap?.time ?? '—' },
+		{ k: 'Snapshot time', v: snap?.time ? fmtDateTime(snap.time) : '—' },
 		{ k: 'Adapter', v: adapter },
 		{ k: 'Core URL', v: CORE_URL || `${'same-origin'} (${location.origin})` },
 		{ k: 'WebSocket URL', v: wsURL() },

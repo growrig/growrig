@@ -4,6 +4,7 @@
 	import { Dialog } from '$lib/components/ui';
 	import CameraPreview from './CameraPreview.svelte';
 	import Radio from '@lucide/svelte/icons/radio';
+	import { fmtSnapshotTime } from '$lib/datetime';
 
 	interface Props { open?: boolean; camera: CameraRef; }
 	let { open = $bindable(false), camera }: Props = $props();
@@ -32,7 +33,7 @@
 	});
 
 	const selectedURL = $derived(selected ? cameraArchiveURL(camera.id, selected.id) : cameraProxyURL(camera.id));
-	const formatTime = (value: string) => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(value));
+	const formatTime = (value: string) => fmtSnapshotTime(value);
 	const maxScroll = $derived(Math.max(0, contentWidth - viewportWidth));
 	const thumbWidth = $derived(contentWidth > 0 ? Math.max(32, (viewportWidth / contentWidth) * viewportWidth) : viewportWidth);
 	const thumbLeft = $derived(maxScroll > 0 ? (scrollLeft / maxScroll) * Math.max(0, viewportWidth - thumbWidth) : 0);
