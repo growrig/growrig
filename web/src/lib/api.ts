@@ -57,7 +57,9 @@ import type {
 	WeatherHistory,
 	IntegrationBundle,
 	IntegrationInstance,
-	IntegrationBinding
+	IntegrationBinding,
+	CatalogSource,
+	CatalogSourcesResponse
 } from './types';
 
 export const CORE_URL: string = import.meta.env.VITE_GROWCORE_URL?.replace(/\/$/, '') ?? '';
@@ -151,6 +153,13 @@ export const updatePreferences = (prefs: Pick<Preferences, 'timezone' | 'locale'
 export const getState = () => json<Snapshot>('/api/state');
 export const getDiscovery = () => json<DiscoveredEntity[]>('/api/discovery');
 export const getCatalog = () => json<CatalogProduct[]>('/api/catalog');
+export const getCatalogSources = () => json<CatalogSourcesResponse>('/api/catalog-sources');
+export const createCatalogSource = (repo: string, ref = '') =>
+	json<CatalogSource>('/api/catalog-sources', { method: 'POST', body: JSON.stringify({ repo, ref }) });
+export const refreshCatalogSource = (id: string) =>
+	json<CatalogSource>(`/api/catalog-sources/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
+export const deleteCatalogSource = (id: string) =>
+	req(`/api/catalog-sources/${encodeURIComponent(id)}`, { method: 'DELETE' });
 export const getStagePresets = () => json<StagePresets>('/api/stage-presets');
 export const loadDemo = () => req('/api/demo', { method: 'POST' });
 

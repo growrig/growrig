@@ -26,6 +26,8 @@ import (
 
 	"github.com/growrig/growrig-platform/growcore/internal/api"
 	"github.com/growrig/growrig-platform/growcore/internal/camera"
+	"github.com/growrig/growrig-platform/growcore/internal/catalog"
+	"github.com/growrig/growrig-platform/growcore/internal/catalogsource"
 	"github.com/growrig/growrig-platform/growcore/internal/config"
 	"github.com/growrig/growrig-platform/growcore/internal/control"
 	"github.com/growrig/growrig-platform/growcore/internal/domain"
@@ -87,7 +89,31 @@ func main() {
 	if err != nil {
 		log.Fatalf("load integrations: %v", err)
 	}
-	apiServer := api.NewServer(st, engine, adapter, hub, string(cfg.Adapter.Type), static, cameraRecorder, filepath.Join(filepath.Dir(cfg.Storage.Path), "preferences.yaml"), integrationManager)
+	catalogSources, err := catalogsource.New(filepath.Dir(cfg.Storage.Path))
+	if err != nil {
+		log.Fatalf("load catalog sources: %v", err)
+	}
+	applyCatalogSources := func() {
+		deviceDirs := catalogSources.Dirs("devices")
+		catalogDirs := make([]catalog.ExtraDir, len(deviceDirs))
+		for i, dir := range deviceDirs {
+			catalogDirs[i] = catalog.ExtraDir{SourceID: dir.SourceID, Dir: dir.Dir}
+		}
+		catalog.SetExtraDirs(catalogDirs)
+
+		integrationDirs := catalogSources.Dirs("integrations")
+		integrationRoots := make([]integrations.ExtraRoot, len(integrationDirs))
+		for i, dir := range integrationDirs {
+			integrationRoots[i] = integrations.ExtraRoot{SourceID: dir.SourceID, Dir: dir.Dir}
+		}
+		if err := integrationManager.SetExtraRoots(integrationRoots); err != nil {
+			log.Printf("reload catalog integrations: %v", err)
+		}
+	}
+	catalogSources.Apply = applyCatalogSources
+	applyCatalogSources()
+
+	apiServer := api.NewServer(st, engine, adapter, hub, string(cfg.Adapter.Type), static, cameraRecorder, filepath.Join(filepath.Dir(cfg.Storage.Path), "preferences.yaml"), integrationManager, catalogSources)
 	go apiServer.PollWeather(ctx)
 
 	srv := &http.Server{

@@ -5,10 +5,10 @@
 // product declares the bindings it contributes and hints (entity domain,
 // device class) the wizard uses to match Home Assistant entities.
 //
-// Devices are defined as YAML files under the repo-root devices/ tree, one per
-// device, grouped by category:
+// Devices are defined as YAML files under the catalog submodule's devices/
+// tree (repo-root catalog/devices/), one per device, grouped by category:
 //
-//	devices/<category>/<device-id>/device.yaml
+//	catalog/devices/<category>/<device-id>/device.yaml
 //
 // The category is the parent directory; the device id is the device directory
 // name. At runtime the loader prefers that on-disk tree (so edits are live in
@@ -91,7 +91,10 @@ type ProductImage struct {
 // Product is a catalog entry — a driver that GrowRig can bind to. It may list
 // the concrete Products (variants) it supports.
 type Product struct {
-	ID            string            `json:"id"`
+	ID string `json:"id"`
+	// Source is the id of the custom catalog source that contributed this
+	// product; empty for the built-in catalog.
+	Source        string            `json:"source,omitempty"`
 	Brand         string            `json:"brand"`
 	Vendor        string            `json:"vendor,omitempty"`
 	Model         string            `json:"model"`
@@ -135,40 +138,95 @@ type deviceFile struct {
 //go:embed all:data
 var data embed.FS
 
+// ExtraDir is an additional devices tree contributed by a custom catalog
+// source (see internal/catalogsource).
+type ExtraDir struct {
+	SourceID string
+	Dir      string
+}
+
 var (
-	once     sync.Once
-	products []Product
+	mu        sync.Mutex
+	loaded    bool
+	products  []Product
+	extraDirs []ExtraDir
 )
 
-// Products returns the device catalog, loaded once. It prefers the on-disk
-// devices/ tree (found by searching up from the working directory, or via
-// GROWCORE_CATALOG_DIR) so edits are live in development, and otherwise reads
-// the tree embedded into the binary.
+// Products returns the device catalog, loaded on first use. It prefers the
+// on-disk catalog/devices/ tree (found by searching up from the working
+// directory, or via GROWCORE_CATALOG_DIR) so edits are live in development,
+// and otherwise reads the tree embedded into the binary. Devices from
+// registered custom catalog sources are merged on top.
 func Products() []Product {
-	once.Do(load)
+	mu.Lock()
+	defer mu.Unlock()
+	if !loaded {
+		load()
+		loaded = true
+	}
 	return products
 }
 
+// SetExtraDirs registers devices trees from custom catalog sources and
+// reloads the catalog. A product with the same category and id as an earlier
+// one overrides it (built-in catalog first, then sources in order).
+func SetExtraDirs(dirs []ExtraDir) {
+	mu.Lock()
+	defer mu.Unlock()
+	extraDirs = dirs
+	load()
+	loaded = true
+}
+
 func load() {
+	var base []Product
 	if dir := diskDir(); dir != "" {
-		if ps, err := loadTree(os.DirFS(dir)); err != nil {
+		if ps, err := loadTree(os.DirFS(dir), ""); err != nil {
 			log.Printf("catalog: reading %s: %v", dir, err)
 		} else if len(ps) > 0 {
-			products = ps
-			return
+			base = ps
+		}
+	}
+	if base == nil {
+		if sub, err := fs.Sub(data, "data"); err == nil {
+			if ps, err := loadTree(sub, ""); err != nil {
+				log.Printf("catalog: reading embedded tree: %v", err)
+			} else {
+				base = ps
+			}
 		}
 	}
 
-	sub, err := fs.Sub(data, "data")
-	if err == nil {
-		if ps, err := loadTree(sub); err != nil {
-			log.Printf("catalog: reading embedded tree: %v", err)
-		} else {
-			products = ps
-			return
+	index := map[string]int{}
+	for i, p := range base {
+		index[string(p.Category)+"/"+p.ID] = i
+	}
+	for _, extra := range extraDirs {
+		ps, err := loadTree(os.DirFS(extra.Dir), extra.SourceID)
+		if err != nil {
+			log.Printf("catalog: reading source %s (%s): %v", extra.SourceID, extra.Dir, err)
+			continue
+		}
+		for _, p := range ps {
+			key := string(p.Category) + "/" + p.ID
+			if at, ok := index[key]; ok {
+				base[at] = p
+			} else {
+				index[key] = len(base)
+				base = append(base, p)
+			}
 		}
 	}
-	products = []Product{}
+	sort.Slice(base, func(i, j int) bool {
+		if ri, rj := categoryRank(base[i].Category), categoryRank(base[j].Category); ri != rj {
+			return ri < rj
+		}
+		return base[i].ID < base[j].ID
+	})
+	if base == nil {
+		base = []Product{}
+	}
+	products = base
 }
 
 // diskDir locates the repo-root devices/ directory, or "" if not found.
@@ -180,12 +238,13 @@ func diskDir() string {
 	if err != nil {
 		return ""
 	}
-	// Walk up from the working directory looking for a devices/ dir that holds
-	// category subdirectories.
+	// Walk up from the working directory looking for the catalog submodule's
+	// devices/ dir (or a bare devices/ tree) holding category subdirectories.
 	for i := 0; i < 8; i++ {
-		cand := filepath.Join(dir, "devices")
-		if isCatalogDir(cand) {
-			return cand
+		for _, cand := range []string{filepath.Join(dir, "catalog", "devices"), filepath.Join(dir, "devices")} {
+			if isCatalogDir(cand) {
+				return cand
+			}
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -225,8 +284,9 @@ func categoryRank(c Category) int {
 	return len(categoryOrder)
 }
 
-// loadTree reads every category/<device>/device.yaml under fsys.
-func loadTree(fsys fs.FS) ([]Product, error) {
+// loadTree reads every category/<device>/device.yaml under fsys, tagging
+// each product with the custom-source id (empty for the built-in catalog).
+func loadTree(fsys fs.FS, source string) ([]Product, error) {
 	cats, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, err
@@ -298,6 +358,7 @@ func loadTree(fsys fs.FS) ([]Product, error) {
 			}
 			out = append(out, Product{
 				ID:            dev.Name(),
+				Source:        source,
 				Brand:         df.Brand,
 				Vendor:        df.Vendor,
 				Model:         df.Model,
@@ -324,12 +385,24 @@ func loadTree(fsys fs.FS) ([]Product, error) {
 	return out, nil
 }
 
-// DeviceAsset reads a catalogue image from disk or the embedded device tree.
+// DeviceAsset reads a catalogue image from a custom source's tree, the
+// on-disk built-in tree or the embedded device tree. Custom sources are
+// searched newest-registered first so an overriding device also serves its
+// own images.
 func DeviceAsset(category, device, name string) ([]byte, error) {
 	if filepath.Base(category) != category || filepath.Base(device) != device || filepath.Base(name) != name {
 		return nil, fs.ErrNotExist
 	}
 	path := category + "/" + device + "/" + name
+	mu.Lock()
+	extras := make([]ExtraDir, len(extraDirs))
+	copy(extras, extraDirs)
+	mu.Unlock()
+	for i := len(extras) - 1; i >= 0; i-- {
+		if raw, err := os.ReadFile(filepath.Join(extras[i].Dir, path)); err == nil {
+			return raw, nil
+		}
+	}
 	if dir := diskDir(); dir != "" {
 		if raw, err := os.ReadFile(filepath.Join(dir, path)); err == nil {
 			return raw, nil

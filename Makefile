@@ -17,15 +17,15 @@
 
 BIN          ?= bin/growcore
 DIST          = growcore/internal/webui/dist
-CATALOG_SRC   = devices
+CATALOG_SRC   = catalog/devices
 CATALOG_DATA  = growcore/internal/catalog/data
-VENDOR_SRC    = vendors
+VENDOR_SRC    = catalog/vendors
 VENDOR_DATA   = growcore/internal/catalog/vendor-data
-SPECIES_SRC   = species
+SPECIES_SRC   = catalog/species
 SPECIES_DATA  = growcore/internal/species/data
-INVENTORY_SRC  = inventory
+INVENTORY_SRC  = catalog/inventory
 INVENTORY_DATA = growcore/internal/inventory/data
-INTEGRATIONS_SRC = integrations
+INTEGRATIONS_SRC = catalog/integrations
 INTEGRATIONS_DATA = growcore/internal/integrations/data
 CONFIG_DEV   ?= growcore.dev.yaml
 CONFIG_SIM    = growcore/growcore.sim.yaml
@@ -70,11 +70,11 @@ dev:
 	wait
 
 .PHONY: dev-core
-dev-core:
+dev-core: catalog-check
 	cd growcore && go run ./cmd/growcore -config ../$(CONFIG_DEV) $(ADDR_FLAG)
 
 .PHONY: dev-core-sim
-dev-core-sim:
+dev-core-sim: catalog-check
 	cd growcore && go run ./cmd/growcore -config growcore.sim.yaml $(ADDR_FLAG)
 
 .PHONY: dev-web
@@ -96,10 +96,18 @@ embed: web-build
 	find $(DIST) -mindepth 1 ! -name .gitkeep -delete
 	cp -r web/build/. $(DIST)/
 
-# Sync the repo-root device catalogue into the Go module so it is embedded in
-# the single binary. The on-disk catalog/ tree stays the source of truth.
+# Sync the catalog submodule into the Go module so the default content is
+# embedded in the single binary. Fail with a useful hint when the submodule
+# was not initialized by a non-recursive clone.
+.PHONY: catalog-check
+catalog-check:
+	@test -f catalog/catalog.yaml || { \
+		echo "catalog submodule is missing; run: git submodule update --init" >&2; \
+		exit 1; \
+	}
+
 .PHONY: catalog-embed
-catalog-embed:
+catalog-embed: catalog-check
 	find $(CATALOG_DATA) -mindepth 1 ! -name .gitkeep -delete
 	cp -r $(CATALOG_SRC)/. $(CATALOG_DATA)/
 	find $(VENDOR_DATA) -mindepth 1 ! -name .gitkeep -delete
@@ -143,7 +151,7 @@ addon: embed catalog-embed
 # --- quality ---
 
 .PHONY: test
-test:
+test: catalog-check
 	cd growcore && go test ./...
 	cd web && npm run check
 
@@ -159,5 +167,7 @@ clean:
 	find $(DIST) -mindepth 1 ! -name .gitkeep -delete
 	find $(CATALOG_DATA) -mindepth 1 ! -name .gitkeep -delete
 	find $(VENDOR_DATA) -mindepth 1 ! -name .gitkeep -delete
+	find $(SPECIES_DATA) -mindepth 1 ! -name .gitkeep -delete
+	find $(INVENTORY_DATA) -mindepth 1 ! -name .gitkeep -delete
 	find $(INTEGRATIONS_DATA) -mindepth 1 ! -name .gitkeep -delete
 	rm -f growcore/*.db growcore.dev.db growcore.dev-local.db

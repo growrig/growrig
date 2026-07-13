@@ -444,6 +444,8 @@ export interface ProductVariant {
 
 export interface CatalogProduct {
 	id: string;
+	/** Custom catalog source id; absent for GrowRig's built-in catalog. */
+	source?: string;
 	brand: string;
 	vendor?: string;
 	model: string;
@@ -739,6 +741,8 @@ export interface IntegrationConfigField {
 
 export interface IntegrationBundle {
 	id: string;
+	/** Custom catalog source id; absent for GrowRig's built-in catalog. */
+	source?: string;
 	name: string;
 	version: string;
 	category: string;
@@ -747,6 +751,25 @@ export interface IntegrationBundle {
 	config: IntegrationConfigField[];
 	icon?: string;
 	documentation?: string;
+}
+
+// --- Additional catalog repositories (Control panel → Catalog) ---
+export interface CatalogSource {
+	id: string;
+	repo: string;
+	ref?: string;
+	name: string;
+	description?: string;
+	maintainer?: string;
+	homepage?: string;
+	provides: string[];
+	addedAt: string;
+	fetchedAt: string;
+}
+
+export interface CatalogSourcesResponse {
+	sources: CatalogSource[];
+	mergedKinds: string[];
 }
 
 export interface IntegrationInstance {

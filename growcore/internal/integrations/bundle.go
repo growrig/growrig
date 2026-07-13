@@ -16,7 +16,10 @@ import (
 )
 
 type Bundle struct {
-	ID            string        `json:"id" yaml:"id"`
+	ID string `json:"id" yaml:"id"`
+	// Source is the id of the custom catalog source that contributed this
+	// bundle; empty for the built-in catalog.
+	Source        string        `json:"source,omitempty" yaml:"-"`
 	Name          string        `json:"name" yaml:"name"`
 	Version       string        `json:"version" yaml:"version"`
 	Category      string        `json:"category" yaml:"category"`
@@ -31,9 +34,9 @@ type Bundle struct {
 	assetRoot     string
 }
 
-// data is populated from the repository integrations/ tree by `make build`.
-// The placeholder keeps plain development builds valid; those load bundles
-// directly from disk instead.
+// data is populated from the catalog submodule's integrations/ tree by
+// `make build`. The placeholder keeps plain development builds valid; those
+// load bundles directly from disk instead.
 //
 //go:embed all:data
 var data embed.FS
@@ -154,9 +157,10 @@ func FindBundleRoot() string {
 	}
 	dir, _ := os.Getwd()
 	for i := 0; i < 8; i++ {
-		candidate := filepath.Join(dir, "integrations")
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate
+		for _, candidate := range []string{filepath.Join(dir, "catalog", "integrations"), filepath.Join(dir, "integrations")} {
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				return candidate
+			}
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

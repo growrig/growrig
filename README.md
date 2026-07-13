@@ -42,6 +42,17 @@ growrig-platform/
 
 ## Quick start (offline simulator)
 
+The default content catalog (devices, integrations, species, inventory,
+vendors) lives in [growrig-catalog](https://github.com/growrig/growrig-catalog),
+linked here as a git submodule at `catalog/` — clone with
+`git clone --recurse-submodules`, or run `git submodule update --init` in an
+existing checkout.
+
+Admins can also add public repositories with a compatible `catalog.yaml`
+manifest under **Control panel → Catalog**. Custom device and integration
+entries are cached beside the Grow Core database and merged without requiring
+a rebuild.
+
 No Home Assistant or hardware required — two processes:
 
 **1. Grow Core** (Go 1.24+):
@@ -155,7 +166,7 @@ devices are simulated or reached through Home Assistant. New adapters (e.g.
 direct MQTT) slot in behind the same interface without touching domain logic.
 
 External services are deliberately separate from adapters and devices. Bundle
-definitions live under `integrations/<category>/<id>/integration.yaml`; users
+definitions live under `catalog/integrations/<category>/<id>/integration.yaml`; users
 configure instances under **Control panel → Integrations**. Secret fields are
 AES-GCM encrypted using a local `0600` key beside the Grow Core database and
 are never returned by the API. Production builds embed the bundle tree while

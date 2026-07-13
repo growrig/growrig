@@ -17,6 +17,7 @@ import (
 
 	"github.com/growrig/growrig-platform/growcore/internal/camera"
 	"github.com/growrig/growrig-platform/growcore/internal/catalog"
+	"github.com/growrig/growrig-platform/growcore/internal/catalogsource"
 	"github.com/growrig/growrig-platform/growcore/internal/control"
 	"github.com/growrig/growrig-platform/growcore/internal/domain"
 	"github.com/growrig/growrig-platform/growcore/internal/integrations"
@@ -34,6 +35,7 @@ type Server struct {
 	cameras         *camera.Recorder
 	preferencesPath string
 	integrations    *integrations.Manager
+	catalogSources  *catalogsource.Manager
 }
 
 func (s *Server) activity(envID, deviceID, level, eventType, message string) {
@@ -46,8 +48,8 @@ func (s *Server) growActivity(growID, envID, level, eventType, message string) {
 	_ = s.store.AddActivity(domain.Activity{GrowID: growID, EnvironmentID: envID, Level: level, Type: eventType, Message: message})
 }
 
-func NewServer(st *store.Store, eng *control.Engine, adapter control.Adapter, hub *Hub, adapterType string, static http.Handler, cameras *camera.Recorder, preferencesPath string, integrationManager *integrations.Manager) *Server {
-	return &Server{store: st, engine: eng, adapter: adapter, hub: hub, adapterType: adapterType, static: static, passkeys: newCeremonyStore(), cameras: cameras, preferencesPath: preferencesPath, integrations: integrationManager}
+func NewServer(st *store.Store, eng *control.Engine, adapter control.Adapter, hub *Hub, adapterType string, static http.Handler, cameras *camera.Recorder, preferencesPath string, integrationManager *integrations.Manager, catalogSources *catalogsource.Manager) *Server {
+	return &Server{store: st, engine: eng, adapter: adapter, hub: hub, adapterType: adapterType, static: static, passkeys: newCeremonyStore(), cameras: cameras, preferencesPath: preferencesPath, integrations: integrationManager, catalogSources: catalogSources}
 }
 
 // Handler builds the HTTP router.
@@ -184,6 +186,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/settings/signup", s.requireAdmin(s.setSignupSetting))
 	mux.HandleFunc("PUT /api/preferences", s.requireAdmin(s.putPreferences))
 	mux.HandleFunc("POST /api/admin/restart", s.requireAdmin(s.restart))
+	mux.HandleFunc("GET /api/catalog-sources", s.requireAdmin(s.getCatalogSources))
+	mux.HandleFunc("POST /api/catalog-sources", s.requireAdmin(s.createCatalogSource))
+	mux.HandleFunc("POST /api/catalog-sources/{id}/refresh", s.requireAdmin(s.refreshCatalogSource))
+	mux.HandleFunc("DELETE /api/catalog-sources/{id}", s.requireAdmin(s.deleteCatalogSource))
 	mux.HandleFunc("GET /api/admin/database/tables", s.requireAdmin(s.getDatabaseTables))
 	mux.HandleFunc("DELETE /api/activity", s.requireAdmin(s.clearActivity))
 	mux.HandleFunc("GET /api/admin/homeassistant", s.requireAdmin(s.getHomeAssistant))

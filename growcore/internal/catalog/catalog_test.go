@@ -1,8 +1,12 @@
 package catalog
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
-// TestProducts loads the committed repo-root devices/ tree and checks the
+// TestProducts loads the catalog submodule's devices/ tree and checks the
 // directory-derived invariants hold.
 func TestProducts(t *testing.T) {
 	products := Products()
@@ -64,6 +68,46 @@ func TestVendors(t *testing.T) {
 	}
 	if Vendors()[0].Color == "" || Vendors()[0].Background == "" {
 		t.Fatal("expected vendor fallback colors")
+	}
+}
+
+func TestExtraCatalogOverridesBuiltInProductAndAssets(t *testing.T) {
+	dir := t.TempDir()
+	deviceDir := filepath.Join(dir, "sensor", "xiaomi-lywsd03mmc")
+	if err := os.MkdirAll(deviceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `brand: Community
+model: Replacement sensor
+connection: home-assistant
+version: "2"
+author: Test
+image: replacement.png
+provides:
+  - label: Temperature
+    kind: sensor
+    measurement: temperature
+    entityDomain: sensor
+`
+	if err := os.WriteFile(filepath.Join(deviceDir, "device.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deviceDir, "replacement.png"), []byte("custom-image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	SetExtraDirs([]ExtraDir{{SourceID: "community", Dir: dir}})
+	t.Cleanup(func() { SetExtraDirs(nil) })
+	product := find(Products(), "xiaomi-lywsd03mmc")
+	if product == nil || product.Source != "community" || product.Brand != "Community" {
+		t.Fatalf("overridden product = %#v", product)
+	}
+	raw, err := DeviceAsset("sensor", "xiaomi-lywsd03mmc", "replacement.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "custom-image" {
+		t.Fatalf("asset = %q", raw)
 	}
 }
 

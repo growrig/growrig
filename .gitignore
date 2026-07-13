@@ -15,10 +15,16 @@
 /growcore/internal/webui/dist/*
 !/growcore/internal/webui/dist/.gitkeep
 
-# Embedded device catalogue — synced from /devices by `make build`; the
-# authoritative source is /devices, only the placeholder is tracked here
+# Embedded catalog trees — synced from the /catalog submodule by `make build`;
+# the authoritative source is /catalog, only the placeholders are tracked here
 /growcore/internal/catalog/data/*
 !/growcore/internal/catalog/data/.gitkeep
+/growcore/internal/catalog/vendor-data/*
+!/growcore/internal/catalog/vendor-data/.gitkeep
+/growcore/internal/species/data/*
+!/growcore/internal/species/data/.gitkeep
+/growcore/internal/inventory/data/*
+!/growcore/internal/inventory/data/.gitkeep
 
 # Embedded integration bundles and the local credential-encryption key.
 /growcore/internal/integrations/data/*

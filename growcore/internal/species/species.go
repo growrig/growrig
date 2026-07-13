@@ -6,10 +6,10 @@
 // grow form derives its stage sequence from the chosen species, and the
 // cultivar form renders attribute inputs dynamically from the species schema.
 //
-// Species are defined as YAML files under the repo-root species/ tree, one per
-// species:
+// Species are defined as YAML files under the catalog submodule's species/
+// tree (repo-root catalog/species/), one per species:
 //
-//	species/<species-id>/species.yaml
+//	catalog/species/<species-id>/species.yaml
 //
 // The species id is the directory name. At runtime the loader prefers that
 // on-disk tree (so edits are live in development), and falls back to the copy
@@ -252,9 +252,10 @@ func diskDir() string {
 		return ""
 	}
 	for i := 0; i < 8; i++ {
-		cand := filepath.Join(dir, "species")
-		if isSpeciesDir(cand) {
-			return cand
+		for _, cand := range []string{filepath.Join(dir, "catalog", "species"), filepath.Join(dir, "species")} {
+			if isSpeciesDir(cand) {
+				return cand
+			}
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

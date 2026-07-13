@@ -8,15 +8,15 @@
 // dynamically from the chosen category's columns, and the API drops any column
 // key a category does not declare.
 //
-// Categories are defined as YAML files under the repo-root inventory/ tree, one
-// per category:
+// Categories are defined as YAML files under the catalog submodule's inventory/
+// tree, one per category:
 //
-//	inventory/<category-id>/inventory.yaml
+//	catalog/inventory/<category-id>/inventory.yaml
 //
 // The category id is the directory name. At runtime the loader prefers that
 // on-disk tree (so edits are live in development), and falls back to the copy
-// embedded into the binary — synced from inventory/ by `make build` — so the
-// add-on still ships as one file. This mirrors internal/species.
+// embedded into the binary — synced from catalog/inventory/ by `make build` —
+// so the add-on still ships as one file. This mirrors internal/species.
 package inventory
 
 import (
@@ -132,7 +132,8 @@ func set(cats []Category) {
 	}
 }
 
-// diskDir locates the repo-root inventory/ directory, or "" if not found.
+// diskDir locates the catalog submodule's inventory/ directory, or "" if not
+// found.
 func diskDir() string {
 	if d := os.Getenv("GROWCORE_INVENTORY_DIR"); d != "" {
 		return d
@@ -142,9 +143,10 @@ func diskDir() string {
 		return ""
 	}
 	for i := 0; i < 8; i++ {
-		cand := filepath.Join(dir, "inventory")
-		if isInventoryDir(cand) {
-			return cand
+		for _, cand := range []string{filepath.Join(dir, "catalog", "inventory"), filepath.Join(dir, "inventory")} {
+			if isInventoryDir(cand) {
+				return cand
+			}
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {

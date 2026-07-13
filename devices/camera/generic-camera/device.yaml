@@ -1,7 +1,0 @@
-brand: Generic
-model: Camera
-connection: generic
-provides:
-  - label: Camera
-    kind: camera
-    entityDomain: camera

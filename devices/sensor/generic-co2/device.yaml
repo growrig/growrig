@@ -1,9 +1,0 @@
-brand: Generic
-model: "CO₂ sensor"
-connection: generic
-provides:
-  - label: "CO₂"
-    kind: sensor
-    measurement: co2
-    entityDomain: sensor
-    deviceClass: carbon_dioxide

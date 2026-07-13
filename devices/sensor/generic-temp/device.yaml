@@ -1,9 +1,0 @@
-brand: Generic
-model: Temperature sensor
-connection: generic
-provides:
-  - label: Temperature
-    kind: sensor
-    measurement: temperature
-    entityDomain: sensor
-    deviceClass: temperature

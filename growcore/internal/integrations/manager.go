@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/growrig/growrig-platform/growcore/internal/domain"
@@ -18,10 +20,20 @@ import (
 )
 
 type Manager struct {
-	store   *store.Store
-	root    string
-	bundles map[string]Bundle
-	vault   *vault
+	store *store.Store
+	root  string
+	vault *vault
+
+	mu         sync.RWMutex
+	bundles    map[string]Bundle
+	extraRoots []ExtraRoot
+}
+
+// ExtraRoot is an additional integrations tree contributed by a custom
+// catalog source (see internal/catalogsource).
+type ExtraRoot struct {
+	SourceID string
+	Dir      string
 }
 
 type InstanceInput struct {
@@ -42,6 +54,29 @@ func NewManager(st *store.Store, root, keyPath string) (*Manager, error) {
 	if root == "" {
 		root = FindBundleRoot()
 	}
+	set, err := loadBundleSet(root, nil)
+	if err != nil {
+		return nil, err
+	}
+	v, err := openVault(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	m := &Manager{store: st, root: root, bundles: set, vault: v}
+	if err := m.ensureDefaultIntegrations(); err != nil {
+		return nil, err
+	}
+	if err := m.ensureDefaultAIChatBinding(); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// loadBundleSet builds the effective bundle map: the built-in tree (falling
+// back to the embedded copy) plus each extra root in order. A bundle with the
+// same id as an earlier one overrides it; a broken extra root is logged and
+// skipped so a bad custom catalog cannot take integrations down.
+func loadBundleSet(root string, extras []ExtraRoot) (map[string]Bundle, error) {
 	bs, err := LoadBundles(root)
 	if err != nil {
 		return nil, err
@@ -52,28 +87,52 @@ func NewManager(st *store.Store, root, keyPath string) (*Manager, error) {
 			return nil, err
 		}
 	}
-	v, err := openVault(keyPath)
-	if err != nil {
-		return nil, err
-	}
-	m := &Manager{store: st, root: root, bundles: map[string]Bundle{}, vault: v}
+	set := map[string]Bundle{}
 	for _, b := range bs {
-		m.bundles[b.ID] = b
+		set[b.ID] = b
 	}
-	if err := m.ensureDefaultIntegrations(); err != nil {
-		return nil, err
+	for _, extra := range extras {
+		ebs, err := LoadBundles(extra.Dir)
+		if err != nil {
+			log.Printf("integrations: reading source %s (%s): %v", extra.SourceID, extra.Dir, err)
+			continue
+		}
+		for _, b := range ebs {
+			b.Source = extra.SourceID
+			set[b.ID] = b
+		}
 	}
-	if err := m.ensureDefaultAIChatBinding(); err != nil {
-		return nil, err
+	return set, nil
+}
+
+// SetExtraRoots registers integration trees from custom catalog sources and
+// reloads the bundle set. Existing instances keep running; instances whose
+// bundle disappears surface as unavailable in the UI.
+func (m *Manager) SetExtraRoots(roots []ExtraRoot) error {
+	set, err := loadBundleSet(m.root, roots)
+	if err != nil {
+		return err
 	}
-	return m, nil
+	m.mu.Lock()
+	m.extraRoots = roots
+	m.bundles = set
+	m.mu.Unlock()
+	return nil
+}
+
+// bundle looks up a bundle by id under the read lock.
+func (m *Manager) bundle(id string) (Bundle, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	b, ok := m.bundles[id]
+	return b, ok
 }
 
 // ensureDefaultIntegrations seeds services GrowRig already depends on. It is
 // idempotent and never replaces a user's existing Open-Meteo instance or
 // weather binding.
 func (m *Manager) ensureDefaultIntegrations() error {
-	if _, available := m.bundles["open-meteo"]; !available {
+	if _, available := m.bundle("open-meteo"); !available {
 		return nil
 	}
 	records, err := m.store.IntegrationInstances()
@@ -129,7 +188,7 @@ func (m *Manager) ensureDefaultAIChatBinding() error {
 		return err
 	}
 	for _, record := range records {
-		bundle, ok := m.bundles[record.Instance.BundleID]
+		bundle, ok := m.bundle(record.Instance.BundleID)
 		if !ok || !record.Instance.Enabled || !bundle.hasCapability("ai.chat") {
 			continue
 		}
@@ -143,10 +202,12 @@ func (m *Manager) ensureDefaultAIChatBinding() error {
 }
 
 func (m *Manager) Bundles() []Bundle {
+	m.mu.RLock()
 	out := make([]Bundle, 0, len(m.bundles))
 	for _, b := range m.bundles {
 		out = append(out, b)
 	}
+	m.mu.RUnlock()
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Category == out[j].Category {
 			return out[i].Name < out[j].Name
@@ -156,7 +217,7 @@ func (m *Manager) Bundles() []Bundle {
 	return out
 }
 func (m *Manager) BundleAsset(id, name string) ([]byte, error) {
-	b, ok := m.bundles[id]
+	b, ok := m.bundle(id)
 	if !ok {
 		return nil, os.ErrNotExist
 	}
@@ -183,7 +244,7 @@ func (m *Manager) Instances() ([]domain.IntegrationInstance, error) {
 }
 
 func (m *Manager) Create(in InstanceInput) (domain.IntegrationInstance, error) {
-	b, ok := m.bundles[in.BundleID]
+	b, ok := m.bundle(in.BundleID)
 	if !ok {
 		return domain.IntegrationInstance{}, fmt.Errorf("unknown integration bundle %q", in.BundleID)
 	}
@@ -222,7 +283,7 @@ func (m *Manager) Update(id string, in InstanceInput) (domain.IntegrationInstanc
 	if err != nil {
 		return domain.IntegrationInstance{}, err
 	}
-	b, ok := m.bundles[rec.Instance.BundleID]
+	b, ok := m.bundle(rec.Instance.BundleID)
 	if !ok {
 		return domain.IntegrationInstance{}, fmt.Errorf("integration bundle %q is unavailable", rec.Instance.BundleID)
 	}
@@ -387,7 +448,7 @@ func (m *Manager) runtimeConfig(id string) (store.IntegrationRecord, Bundle, map
 	if err != nil {
 		return rec, Bundle{}, nil, err
 	}
-	b, ok := m.bundles[rec.Instance.BundleID]
+	b, ok := m.bundle(rec.Instance.BundleID)
 	if !ok {
 		return rec, Bundle{}, nil, fmt.Errorf("integration bundle %q is unavailable", rec.Instance.BundleID)
 	}
@@ -446,7 +507,7 @@ func (m *Manager) secretFieldNames(bundleID, sealed string) []string {
 	if sealed == "" {
 		return nil
 	}
-	b, ok := m.bundles[bundleID]
+	b, ok := m.bundle(bundleID)
 	if !ok {
 		return nil
 	}

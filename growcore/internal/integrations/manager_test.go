@@ -150,6 +150,65 @@ runtime: {type: builtin, handler: ollama}
 	}
 }
 
+func TestExtraRootsOverrideAndRestoreBuiltInBundles(t *testing.T) {
+	dir := t.TempDir()
+	builtInDir := filepath.Join(dir, "built-in", "data", "example")
+	extraDir := filepath.Join(dir, "extra", "data", "example")
+	if err := os.MkdirAll(builtInDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(extraDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bundleYAML := func(version, description string) []byte {
+		return []byte(`id: example
+name: Example
+version: "` + version + `"
+category: data
+description: ` + description + `
+capabilities: [example.read]
+runtime: {type: builtin, handler: example}
+`)
+	}
+	if err := os.WriteFile(filepath.Join(builtInDir, "integration.yaml"), bundleYAML("1", "Built in"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(extraDir, "integration.yaml"), bundleYAML("2", "Community"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(extraDir, "icon.svg"), []byte("<svg/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(filepath.Join(dir, "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m, err := NewManager(st, filepath.Join(dir, "built-in"), filepath.Join(dir, "key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetExtraRoots([]ExtraRoot{{SourceID: "community", Dir: filepath.Join(dir, "extra")}}); err != nil {
+		t.Fatal(err)
+	}
+	overridden, ok := m.bundle("example")
+	if !ok || overridden.Version != "2" || overridden.Source != "community" {
+		t.Fatalf("overridden bundle = %#v", overridden)
+	}
+	if raw, err := m.BundleAsset("example", "icon.svg"); err != nil || string(raw) != "<svg/>" {
+		t.Fatalf("custom icon = %q, %v", raw, err)
+	}
+
+	if err := m.SetExtraRoots(nil); err != nil {
+		t.Fatal(err)
+	}
+	restored, ok := m.bundle("example")
+	if !ok || restored.Version != "1" || restored.Source != "" {
+		t.Fatalf("restored bundle = %#v", restored)
+	}
+}
+
 func TestFirstAIChatInstanceGetsDefaultBinding(t *testing.T) {
 	dir := t.TempDir()
 	bundleDir := filepath.Join(dir, "bundles", "ai", "x")

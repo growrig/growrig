@@ -1,9 +1,0 @@
-brand: Generic
-model: Humidity sensor
-connection: generic
-provides:
-  - label: Humidity
-    kind: sensor
-    measurement: humidity
-    entityDomain: sensor
-    deviceClass: humidity
