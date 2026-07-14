@@ -229,6 +229,22 @@ func (s *Server) getGrow(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	// Hydrate placements and pots for all of the grow's units in two queries
+	// (rather than a pair per unit), then index into the results below.
+	unitIDs := make([]string, len(units))
+	for i, u := range units {
+		unitIDs[i] = u.ID
+	}
+	placementsByUnit, err := s.store.PlacementsForUnits(unitIDs)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	potsByUnit, err := s.store.PotsForUnits(unitIDs)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
 	now := time.Now()
 	detail := growDetail{
 		Grow:      grow,
@@ -240,23 +256,15 @@ func (s *Server) getGrow(w http.ResponseWriter, r *http.Request) {
 		if u.Status == domain.PlantActive {
 			detail.PlantCount += u.Quantity
 		}
-		placements, err := s.store.PlacementsForUnit(u.ID)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
-			return
-		}
 		pd := plantDetail{PlantUnit: u, Placements: []placementView{}}
-		for _, p := range placements {
+		for _, p := range placementsByUnit[u.ID] {
 			pd.Placements = append(pd.Placements, placementView{PlantPlacement: p, EnvironmentName: envName[p.EnvironmentID]})
 			if p.EndedAt == nil {
 				pd.CurrentEnvironmentID = p.EnvironmentID
 				pd.CurrentEnvironmentName = envName[p.EnvironmentID]
 			}
 		}
-		if pd.Pots, pd.CurrentPot, err = s.potsFor(u.ID); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
-			return
-		}
+		pd.Pots, pd.CurrentPot = normalizePots(potsByUnit[u.ID])
 		detail.Plants = append(detail.Plants, pd)
 	}
 	writeJSON(w, http.StatusOK, detail)
@@ -281,6 +289,13 @@ func (s *Server) potsFor(unitID string) ([]domain.PlantPot, *domain.PlantPot, er
 	if err != nil {
 		return nil, nil, err
 	}
+	list, current := normalizePots(pots)
+	return list, current, nil
+}
+
+// normalizePots returns a non-nil pot list (newest first) and the current (open)
+// pot, if any. pots is expected already ordered newest first.
+func normalizePots(pots []domain.PlantPot) ([]domain.PlantPot, *domain.PlantPot) {
 	if pots == nil {
 		pots = []domain.PlantPot{}
 	}
@@ -291,7 +306,7 @@ func (s *Server) potsFor(unitID string) ([]domain.PlantPot, *domain.PlantPot, er
 			break
 		}
 	}
-	return pots, current, nil
+	return pots, current
 }
 
 func (s *Server) getPlant(w http.ResponseWriter, r *http.Request) {

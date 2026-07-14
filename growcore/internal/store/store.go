@@ -53,6 +53,21 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// inClause builds a "?,?,…" placeholder list and the matching args slice for a
+// SQL IN (…) predicate over the given ids.
+func inClause(ids []string) (string, []any) {
+	args := make([]any, len(ids))
+	var b strings.Builder
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('?')
+		args[i] = id
+	}
+	return b.String(), args
+}
+
 func (s *Store) migrate() error {
 	const schema = `
 CREATE TABLE IF NOT EXISTS environments (
@@ -960,6 +975,30 @@ func (s *Store) PlacementsForUnit(unitID string) ([]domain.PlantPlacement, error
 	return out, rows.Err()
 }
 
+// PlacementsForUnits loads the placements for many units in one query, grouped
+// by unit id (each group newest first, matching PlacementsForUnit), so a grow's
+// plants can be hydrated without a query per unit.
+func (s *Store) PlacementsForUnits(unitIDs []string) (map[string][]domain.PlantPlacement, error) {
+	out := map[string][]domain.PlantPlacement{}
+	if len(unitIDs) == 0 {
+		return out, nil
+	}
+	in, args := inClause(unitIDs)
+	rows, err := s.db.Query(`SELECT `+placementCols+` FROM plant_placements WHERE plant_unit_id IN (`+in+`) ORDER BY started_at DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		p, err := scanPlacement(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out[p.PlantUnitID] = append(out[p.PlantUnitID], p)
+	}
+	return out, rows.Err()
+}
+
 // CurrentPlacements returns every open placement (ended_at IS NULL): where each
 // plant unit lives right now.
 func (s *Store) CurrentPlacements() ([]domain.PlantPlacement, error) {
@@ -1107,6 +1146,30 @@ func (s *Store) PotsForUnit(unitID string) ([]domain.PlantPot, error) {
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// PotsForUnits loads the pot histories for many units in one query, grouped by
+// unit id (each group newest first, matching PotsForUnit), so a grow's plants
+// can be hydrated without a query per unit.
+func (s *Store) PotsForUnits(unitIDs []string) (map[string][]domain.PlantPot, error) {
+	out := map[string][]domain.PlantPot{}
+	if len(unitIDs) == 0 {
+		return out, nil
+	}
+	in, args := inClause(unitIDs)
+	rows, err := s.db.Query(`SELECT `+potCols+` FROM plant_pots WHERE plant_unit_id IN (`+in+`) ORDER BY started_at DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		p, err := scanPot(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out[p.PlantUnitID] = append(out[p.PlantUnitID], p)
 	}
 	return out, rows.Err()
 }

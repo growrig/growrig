@@ -1,6 +1,7 @@
 package store
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -124,6 +125,70 @@ func TestBulkCreateAndMovePlant(t *testing.T) {
 	}
 	if open != 1 {
 		t.Fatalf("expected exactly 1 open placement, got %d", open)
+	}
+}
+
+// The batched PlacementsForUnits/PotsForUnits must return, per unit, exactly
+// what the per-unit PlacementsForUnit/PotsForUnit return (same grouping and
+// newest-first ordering) — they replace an N+1 loop in the grow-detail handler.
+func TestBatchPlacementsAndPotsMatchSingle(t *testing.T) {
+	st := open(t)
+	_ = st.SaveEnvironment(domain.Environment{ID: "tent-a", Name: "Tent A", Kind: domain.KindTent})
+	_ = st.SaveEnvironment(domain.Environment{ID: "room-b", Name: "Room B", Kind: domain.KindRoom})
+	_ = st.SaveGrow(domain.Grow{ID: "grow-1", Name: "G", Stages: domain.DefaultStages, Status: domain.GrowActive})
+
+	units, err := st.BulkCreatePlants("grow-1", 3, domain.TrackIndividual, 1, "Plant", "Genovese", "tent-a", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Give the units differing histories so ordering/grouping is exercised: move
+	// one, repot two of them (repotting more than once builds a pot history).
+	if err := st.MovePlant(units[0].ID, "room-b", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Repot(units[0].ID, 5, "L", "fabric", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Repot(units[0].ID, 11, "L", "fabric", time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Repot(units[1].ID, 3, "gal", "plastic", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	ids := []string{units[0].ID, units[1].ID, units[2].ID}
+	placeBatch, err := st.PlacementsForUnits(ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	potsBatch, err := st.PotsForUnits(ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		single, err := st.PlacementsForUnit(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(single, placeBatch[id]) {
+			t.Fatalf("placements mismatch for %s:\n single=%+v\n batch=%+v", id, single, placeBatch[id])
+		}
+		pots, err := st.PotsForUnit(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(pots, potsBatch[id]) {
+			t.Fatalf("pots mismatch for %s:\n single=%+v\n batch=%+v", id, pots, potsBatch[id])
+		}
+	}
+	// A unit with no pots must simply be absent from the batch map (nil slice),
+	// mirroring PotsForUnit returning an empty history.
+	if got := potsBatch[units[2].ID]; got != nil {
+		t.Fatalf("unit with no pots should be absent from batch map, got %+v", got)
+	}
+	// Empty input is a no-op, not an error.
+	if m, err := st.PlacementsForUnits(nil); err != nil || len(m) != 0 {
+		t.Fatalf("empty input: got %v, %v", m, err)
 	}
 }
 
