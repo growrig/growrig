@@ -255,8 +255,8 @@
 						{@const st = status(b)}
 						<div class="flex items-center gap-3 border-b border-rig-800/60 px-4 py-2.5 last:border-0">
 							<div class="min-w-0 flex-1"><div class="text-xs font-medium capitalize text-rig-300">{meta(b)}</div></div>
-							{#if b.kind === 'camera'}<CameraStreamStats cameraId={b.id} class="text-xs font-semibold text-rig-300" />{:else}<div class="text-sm font-semibold tabular-nums">{st.value || '—'}</div>{/if}
-							<span class="h-2 w-2 rounded-full {st.online ? 'bg-leaf' : st.online === false ? 'bg-danger' : 'bg-rig-700'}" title={st.online ? 'Online' : st.online === false ? 'Offline' : 'Unknown'}></span>
+							{#if b.kind === 'camera' && b.cameraType === 'rtsp'}<CameraStreamStats cameraId={b.id} class="text-xs font-semibold text-rig-300" />{:else}<div class="text-sm font-semibold tabular-nums">{st.value || '—'}</div>{/if}
+							{#if b.kind !== 'camera' || b.cameraType !== 'rtsp'}<span class="h-2 w-2 rounded-full {st.online ? 'bg-leaf' : st.online === false ? 'bg-danger' : 'bg-rig-700'}" title={st.online ? 'Online' : st.online === false ? 'Offline' : 'Unknown'}></span>{/if}
 							<div class="flex items-center gap-1">
 							{#if b.kind === 'light'}
 								{#if b.primary}

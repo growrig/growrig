@@ -201,7 +201,7 @@ const roleLabel: Record<string, string> = {
 								<div class="mt-2 flex items-center gap-2 text-sm">
 									<Camera size={16} class="text-rig-400" />
 									<span class="transition-colors group-hover:text-leaf">{cam.name}</span>
-									<span class="ml-auto flex items-center gap-2 text-xs text-rig-500">{#if cam.cameraType === 'rtsp'}<CameraStreamStats cameraId={cam.id} /><span>·</span>{/if}<span>{cam.cameraType === 'rtsp' ? 'Live · RTSP' : cam.entity ? 'Home Assistant' : cam.cameraType || 'Connecting…'}</span></span>
+									<span class="ml-auto flex items-center gap-2 text-xs text-rig-500">{#if cam.cameraType === 'rtsp'}<CameraStreamStats cameraId={cam.id} showProtocol />{:else}<span>{cam.entity ? 'Home Assistant' : cam.cameraType || 'Connecting…'}</span>{/if}</span>
 								</div>
 							</div>
 						{/each}

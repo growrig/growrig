@@ -37,13 +37,28 @@ type streamStats struct {
 	bitrateBps                int64
 	fps                       float64
 	lastFrame                 time.Time
+	status                    string
+	retryCount                int
+	lastError                 string
+	statusSince               time.Time
 }
 type Stats struct {
-	BitrateBps int64     `json:"bitrateBps"`
-	FPS        float64   `json:"fps"`
-	Online     bool      `json:"online"`
-	LastFrame  time.Time `json:"lastFrame,omitempty"`
+	BitrateBps  int64     `json:"bitrateBps"`
+	FPS         float64   `json:"fps"`
+	Online      bool      `json:"online"`
+	LastFrame   time.Time `json:"lastFrame,omitempty"`
+	Status      string    `json:"status"`
+	RetryCount  int       `json:"retryCount"`
+	LastError   string    `json:"lastError,omitempty"`
+	StatusSince time.Time `json:"statusSince,omitempty"`
 }
+
+const streamOnlineWindow = 10 * time.Second
+
+var (
+	frameStartupTimeout = 20 * time.Second
+	frameStallTimeout   = 15 * time.Second
+)
 
 type workerState struct {
 	cancel    context.CancelFunc
@@ -64,9 +79,14 @@ func (r *Recorder) StreamStats(id string) Stats {
 	defer r.mu.Unlock()
 	s := r.stats[id]
 	if s == nil {
-		return Stats{}
+		return Stats{Status: "connecting"}
 	}
-	return Stats{BitrateBps: s.bitrateBps, FPS: s.fps, Online: time.Since(s.lastFrame) < 10*time.Second, LastFrame: s.lastFrame}
+	online := s.status == "online" && time.Since(s.lastFrame) < streamOnlineWindow
+	status := s.status
+	if status == "online" && !online {
+		status = "stalled"
+	}
+	return Stats{BitrateBps: s.bitrateBps, FPS: s.fps, Online: online, LastFrame: s.lastFrame, Status: status, RetryCount: s.retryCount, LastError: s.lastError, StatusSince: s.statusSince}
 }
 
 func (r *Recorder) recordFrame(id string, bytes int) {
@@ -81,6 +101,12 @@ func (r *Recorder) recordFrame(id string, bytes int) {
 	s.windowBytes += int64(bytes)
 	s.windowFrames++
 	s.lastFrame = now
+	if s.status != "online" {
+		s.statusSince = now
+	}
+	s.status = "online"
+	s.retryCount = 0
+	s.lastError = ""
 	if elapsed := now.Sub(s.windowStart); elapsed >= time.Second {
 		s.bitrateBps = int64(float64(s.windowBytes*8) / elapsed.Seconds())
 		s.fps = float64(s.windowFrames) / elapsed.Seconds()
@@ -88,6 +114,27 @@ func (r *Recorder) recordFrame(id string, bytes int) {
 		s.windowFrames = 0
 		s.windowStart = now
 	}
+}
+
+func (r *Recorder) markConnecting(id string, retryCount int, lastError error) {
+	now := time.Now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s := r.stats[id]
+	if s == nil {
+		s = &streamStats{windowStart: now}
+		r.stats[id] = s
+	}
+	if retryCount == 0 {
+		s.status = "connecting"
+	} else {
+		s.status = "reconnecting"
+	}
+	s.retryCount = retryCount
+	if lastError != nil {
+		s.lastError = lastError.Error()
+	}
+	s.statusSince = now
 }
 
 func (r *Recorder) Run(ctx context.Context) {
@@ -244,11 +291,19 @@ func signature(b domain.Binding) string {
 
 func (r *Recorder) worker(ctx context.Context, b domain.Binding) {
 	backoff := time.Second
+	retryCount := 0
 	for ctx.Err() == nil {
-		err := r.capture(ctx, b)
+		r.markConnecting(b.ID, retryCount, nil)
+		receivedFrame, err := r.capture(ctx, b)
 		if ctx.Err() != nil {
 			return
 		}
+		if receivedFrame {
+			backoff = time.Second
+			retryCount = 0
+		}
+		retryCount++
+		r.markConnecting(b.ID, retryCount, err)
 		log.Printf("camera recorder %s: %v; reconnecting in %s", b.Name, err, backoff)
 		select {
 		case <-ctx.Done():
@@ -261,7 +316,12 @@ func (r *Recorder) worker(ctx context.Context, b domain.Binding) {
 	}
 }
 
-func (r *Recorder) capture(ctx context.Context, b domain.Binding) error {
+type frameResult struct {
+	jpeg []byte
+	err  error
+}
+
+func (r *Recorder) capture(ctx context.Context, b domain.Binding) (bool, error) {
 	interval := b.CameraCaptureInterval
 	if interval <= 0 {
 		interval = 60
@@ -273,14 +333,14 @@ func (r *Recorder) capture(ctx context.Context, b domain.Binding) error {
 		"-vf", "fps=5", "-c:v", "mjpeg", "-q:v", "5", "-f", "image2pipe", "pipe:1")
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return false, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("open ffmpeg stderr: %w", err)
+		return false, fmt.Errorf("open ffmpeg stderr: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start ffmpeg: %w", err)
+		return false, fmt.Errorf("start ffmpeg: %w", err)
 	}
 	go func() {
 		scanner := bufio.NewScanner(stderr)
@@ -288,35 +348,73 @@ func (r *Recorder) capture(ctx context.Context, b domain.Binding) error {
 			log.Printf("camera recorder %s: ffmpeg: %s", b.ID, sanitizeFFmpegLine(scanner.Text(), b.StreamURL))
 		}
 	}()
-	reader := bufio.NewReaderSize(out, 256*1024)
+	readCtx, cancelRead := context.WithCancel(ctx)
+	defer cancelRead()
+	frames := make(chan frameResult, 1)
+	go func() {
+		reader := bufio.NewReaderSize(out, 256*1024)
+		for {
+			jpeg, err := readJPEG(reader, 25<<20)
+			select {
+			case frames <- frameResult{jpeg: jpeg, err: err}:
+			case <-readCtx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
 	var lastSaved time.Time
-	firstFrame := true
-	for ctx.Err() == nil {
-		jpeg, err := readJPEG(reader, 25<<20)
-		if err != nil {
+	receivedFrame := false
+	watchdog := time.NewTimer(frameStartupTimeout)
+	defer watchdog.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return receivedFrame, ctx.Err()
+		case <-watchdog.C:
+			_ = cmd.Process.Kill()
 			waitErr := cmd.Wait()
-			return fmt.Errorf("frame stream ended after %s: read=%v ffmpeg=%v", time.Since(started).Round(time.Millisecond), err, waitErr)
-		}
-		if firstFrame {
-			log.Printf("camera recorder %s: first frame decoded in %s (%d bytes)", b.ID, time.Since(started).Round(time.Millisecond), len(jpeg))
-			firstFrame = false
-		}
-		r.publish(b.ID, jpeg)
-		r.recordFrame(b.ID, len(jpeg))
-		now := time.Now()
-		if lastSaved.IsZero() || now.Sub(lastSaved) >= time.Duration(interval)*time.Second {
-			if err := r.save(b, jpeg, now); err != nil {
-				log.Printf("camera recorder %s: save: %v", b.Name, err)
-			} else {
-				if lastSaved.IsZero() {
-					log.Printf("camera recorder %s: first snapshot saved to %s", b.ID, r.Latest(b.EnvironmentID, b.ID))
+			phase := "waiting for first frame"
+			if receivedFrame {
+				phase = "without a new frame"
+			}
+			return receivedFrame, fmt.Errorf("stream watchdog timed out %s after %s (ffmpeg=%v)", phase, time.Since(started).Round(time.Millisecond), waitErr)
+		case result := <-frames:
+			if result.err != nil {
+				waitErr := cmd.Wait()
+				return receivedFrame, fmt.Errorf("frame stream ended after %s: read=%v ffmpeg=%v", time.Since(started).Round(time.Millisecond), result.err, waitErr)
+			}
+			jpeg := result.jpeg
+			if !receivedFrame {
+				log.Printf("camera recorder %s: first frame decoded in %s (%d bytes)", b.ID, time.Since(started).Round(time.Millisecond), len(jpeg))
+				receivedFrame = true
+			}
+			if !watchdog.Stop() {
+				select {
+				case <-watchdog.C:
+				default:
 				}
-				lastSaved = now
+			}
+			watchdog.Reset(frameStallTimeout)
+			r.publish(b.ID, jpeg)
+			r.recordFrame(b.ID, len(jpeg))
+			now := time.Now()
+			if lastSaved.IsZero() || now.Sub(lastSaved) >= time.Duration(interval)*time.Second {
+				if err := r.save(b, jpeg, now); err != nil {
+					log.Printf("camera recorder %s: save: %v", b.Name, err)
+				} else {
+					if lastSaved.IsZero() {
+						log.Printf("camera recorder %s: first snapshot saved to %s", b.ID, r.Latest(b.EnvironmentID, b.ID))
+					}
+					lastSaved = now
+				}
 			}
 		}
 	}
-	_ = cmd.Wait()
-	return ctx.Err()
 }
 
 func ffmpegPath() string {

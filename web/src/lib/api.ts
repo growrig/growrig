@@ -111,7 +111,16 @@ export const getCameraSnapshots = (bindingId: string, limit = 200) =>
 	json<CameraSnapshot[]>(`/api/bindings/${encodeURIComponent(bindingId)}/camera/archive?limit=${limit}`);
 export const cameraArchiveURL = (bindingId: string, snapshotId: string) =>
 	authenticatedMediaURL(`/api/bindings/${encodeURIComponent(bindingId)}/camera/archive/${encodeURIComponent(snapshotId)}`);
-export interface CameraStats { bitrateBps: number; fps: number; online: boolean; lastFrame?: string }
+export interface CameraStats {
+	bitrateBps: number;
+	fps: number;
+	online: boolean;
+	lastFrame?: string;
+	status: 'connecting' | 'online' | 'stalled' | 'reconnecting';
+	retryCount: number;
+	lastError?: string;
+	statusSince?: string;
+}
 export const getCameraStats = (bindingId: string) =>
 	json<CameraStats>(`/api/bindings/${encodeURIComponent(bindingId)}/camera/stats`);
 
