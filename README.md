@@ -1,127 +1,112 @@
-# GrowRig Platform
+# GrowRig
 
-Grow Core and the Grow App Web — the software half of [GrowRig](https://growrig.dev),
-an open-source, local-first ecosystem for controlled indoor growing.
+Grow Core and Grow App Web — the software behind **GrowRig**, an open-source,
+local-first platform for monitoring and automating controlled indoor growing. A
+Go control engine keeps each grow environment on its climate targets, and a
+SvelteKit dashboard makes every decision visible. It integrates with Home
+Assistant and runs end-to-end with no hardware through a built-in simulator.
 
-This repository currently implements the **Phase 2 vertical slice** from the
-[roadmap](https://growrig.dev/docs/roadmap/): a Go control engine with persistent storage, a
-built-in simulator, a live API, and a SvelteKit dashboard. It runs end-to-end
-**without any hardware** — the simulator stands in for a Grow Controller so you
-can see the whole system working before flashing a single ESP32.
+Documentation and guides: **[growrig.dev](https://growrig.dev)**.
 
 ```
 growrig/
-├── growcore/   # Grow Core — Go control engine + API (see growcore/)
+├── growcore/   # Grow Core — Go control engine + HTTP/WebSocket API
 └── web/        # Grow App Web — SvelteKit + Tailwind dashboard
 ```
 
-## What works today
+## Features
 
-- **Domain model** — environments with climate targets; devices with fan
-  channels mapped to semantic roles (exhaust / intake / circulation).
-- **Reconciliation engine** — a proportional control law turns *current vs.
-  target temperature* into desired fan speeds, with an emergency-temperature
-  override that forces every fan to 100%.
-- **Adapters** — a **Home Assistant** adapter (reads climate sensors over the
-  HA WebSocket API, commands fans via `fan.set_percentage`) and a built-in
-  **simulator** (a small physical model where temperature responds to fan
-  speed) — selected purely by config.
-- **YAML configuration** — one binary, two deployments: HAOS add-on (via the
-  Supervisor proxy) or remote HA for local dev, differing only by config.
-- **Persistence** — SQLite (pure-Go driver, no CGO) stores configuration and
-  climate history.
-- **Live API** — REST for configuration + a WebSocket that streams the full
-  system snapshot every control tick.
-- **Web dashboard** — live temperature/humidity sparklines with target lines,
-  controller health, per-fan speed/RPM, and a Setup page for targets and role
-  mapping.
-- **External integrations** — reusable YAML bundles, encrypted configured
-  instances, typed capabilities, health tests, and feature bindings. The first
-  bundles support Ollama, generic notification webhooks, and the automatically
-  configured Open-Meteo weather provider.
+- **Semantic domain model** — grow environments with climate targets, and
+  devices whose channels map to roles (exhaust, intake, circulation) rather than
+  to a specific vendor.
+- **Reconciliation engine** — a proportional control law drives fan speeds from
+  the gap between current and target temperature, with an emergency override
+  that forces full exhaust.
+- **Pluggable adapters** — a Home Assistant adapter (climate over the WebSocket
+  API, commands via `fan.set_percentage`) and a physics-based simulator, chosen
+  by configuration alone. New transports slot in behind a single interface.
+- **Content catalog** — supported devices, integrations, species, inventory and
+  vendors ship as a versioned catalog, and installations can add their own
+  catalog sources at runtime. See
+  [growrig-catalog](https://github.com/growrig/growrig-catalog).
+- **External integrations** — reusable, typed integration bundles with encrypted
+  credentials, connection tests and feature bindings; bundled providers include
+  Ollama, notification webhooks and Open-Meteo weather.
+- **Persistence** — configuration and climate history in SQLite (pure-Go, no CGO).
+- **Live API** — REST for configuration, plus a WebSocket that streams the full
+  system snapshot on every control tick.
+- **Dashboard** — live temperature and humidity trends against targets,
+  controller health, per-fan speed and RPM, and setup for targets and roles.
 
-## Quick start (offline simulator)
+## Quick start
 
-The default content catalog (devices, integrations, species, inventory,
-vendors) lives in [growrig-catalog](https://github.com/growrig/growrig-catalog),
-linked here as a git submodule at `catalog/` — clone with
-`git clone --recurse-submodules`, or run `git submodule update --init` in an
-existing checkout.
+The default content catalog lives in
+[growrig-catalog](https://github.com/growrig/growrig-catalog) and is linked as a
+submodule at `catalog/`; clone with `--recurse-submodules`, or run
+`git submodule update --init` in an existing checkout. No Home Assistant or
+hardware is required — the simulator stands in for a controller.
 
-Admins can also add public repositories with a compatible `catalog.yaml`
-manifest under **Control panel → Catalogs**. GrowRig recognizes GitHub,
-GitLab.com, Bitbucket Cloud, Codeberg, Gitea.com, and self-hosted Forgejo or
-Gitea repository URLs and downloads the provider's source archive automatically.
-Custom device and integration entries are cached beside the Grow Core database
-and merged without requiring a rebuild or Git client.
-
-No Home Assistant or hardware required — two processes:
-
-**1. Grow Core** (Go 1.24+):
+**Grow Core** (Go 1.26+):
 
 ```bash
 cd growcore
 go run ./cmd/growcore -config growcore.sim.yaml   # listens on :8080
 ```
 
-**2. Grow App Web** (Node 20+):
+**Grow App Web** (Node 20+):
 
 ```bash
 cd web
 npm install
-npm run dev                      # http://localhost:5173
+npm run dev                                        # http://localhost:5173
 ```
 
-The web app talks to Grow Core at `http://localhost:8080` by default. To point
-it elsewhere, set `VITE_GROWCORE_URL` (see [`web/.env.example`](web/.env.example)).
+The dashboard talks to Grow Core at `http://localhost:8080`; override with
+`VITE_GROWCORE_URL` (see [`web/.env.example`](web/.env.example)). Open **Setup**
+and lower a temperature target below the current reading — the exhaust fan ramps
+up on the dashboard within a second.
 
-Open the dashboard, go to **Setup**, and lower the temperature target below the
-current reading — the exhaust fan will ramp up on the dashboard within a second.
+## Home Assistant add-on
 
-## Install on Home Assistant
-
-Grow Core ships as a **local Home Assistant OS add-on** in
-[`addon/growrig/`](addon/growrig/). Build the arch-matched binaries and copy the
-folder onto your HAOS host:
+Grow Core ships as a local Home Assistant OS add-on in
+[`addon/growrig/`](addon/growrig/):
 
 ```bash
-make addon        # cross-compiles addon/growrig/bin/growcore.{aarch64,amd64,armv7}
+make addon        # cross-compiles the arch-matched binaries
 ```
 
-Copy `addon/growrig/` to the `addons` share (`/addons/growrig/`), then in Home
-Assistant open **Settings → Add-ons → Add-on Store → ⋮ → Check for updates** and
-install **GrowRig — Grow Core** from *Local add-ons*. The add-on reaches Home
-Assistant through the Supervisor proxy (no token needed) and serves the
-dashboard on host port `8099` by default. See
-[`addon/growrig/README.md`](addon/growrig/README.md) for details.
+Copy `addon/growrig/` to the HAOS `addons` share, then install **GrowRig — Grow
+Core** from *Local add-ons*. The add-on reaches Home Assistant through the
+Supervisor proxy (no token needed) and serves the dashboard on host port `8099`.
+See [`addon/growrig/README.md`](addon/growrig/README.md) for details.
 
 ## Configuration
 
-Grow Core is configured with YAML. The same binary runs in three modes,
-selected by `adapter.type` and the config file you pass with `-config`:
+Grow Core is configured with YAML; the same binary runs in three modes, selected
+by the `-config` file:
 
 | File | Mode | Home Assistant |
 |---|---|---|
-| [`growcore.yaml`](growcore/growcore.yaml) | **Default — HAOS add-on** | Supervisor proxy (`http://supervisor/core`, `$SUPERVISOR_TOKEN`) |
+| [`growcore.yaml`](growcore/growcore.yaml) | HAOS add-on (default) | Supervisor proxy (`http://supervisor/core`, `$SUPERVISOR_TOKEN`) |
 | [`growcore.dev.yaml`](growcore/growcore.dev.yaml) | Local dev vs. remote HA | `http://homeassistant.local:8123` + long-lived token |
 | [`growcore.sim.yaml`](growcore/growcore.sim.yaml) | Offline simulator | none |
 
-`${ENV_VAR}` references in the file are expanded at load, so tokens stay out of
-version control. For local development against your own Home Assistant:
+`${ENV_VAR}` references are expanded at load, so tokens stay out of version
+control. The config declares environments, devices, and how each device's
+sensors and fan channels bind to Home Assistant entities.
 
 ```bash
-export GROWCORE_HA_TOKEN=eyJ...          # HA → Profile → Long-lived access tokens
+export GROWCORE_HA_TOKEN=…    # HA → Profile → Long-lived access tokens
 go run ./cmd/growcore -config growcore.dev.yaml
 ```
 
-The config declares environments, devices, and how each device's sensors and
-fan channels bind to Home Assistant entities. Edit the `sensor.*` / `fan.*`
-entity ids to match your ESPHome controller. Running with no config file at all
-uses the built-in simulator defaults.
+If your ESPHome PWM outputs are exposed as `number` or `light` entities rather
+than `fan`, adjust the adapter's service call accordingly.
 
-## Grow Core API
+## API
 
-Base URL `http://localhost:8080`.
+Base URL `http://localhost:8080`. The full reference lives in the
+[documentation](https://growrig.dev/docs/).
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -129,8 +114,8 @@ Base URL `http://localhost:8080`.
 | `GET` | `/api/state` | Latest full snapshot |
 | `GET` | `/api/roles` | Assignable channel roles |
 | `GET` | `/api/environments` | List environments |
-| `GET` | `/api/catalog` | Device catalogue (including vendor and image metadata) |
-| `GET` | `/api/vendors` | Vendor catalogue and logo paths |
+| `GET` | `/api/catalog` | Device catalog (including vendor and image metadata) |
+| `GET` | `/api/vendors` | Vendor catalog and logo paths |
 | `GET` | `/api/integration-bundles` | Available external-service integrations |
 | `GET/POST` | `/api/integration-instances` | List or create configured instances (admin) |
 | `POST` | `/api/integration-instances/{id}/test` | Test an instance connection (admin) |
@@ -141,51 +126,32 @@ Base URL `http://localhost:8080`.
 | `PUT` | `/api/devices/{id}/channels/{ch}/role` | Assign `{role}` to a channel |
 | `GET` | `/api/ws` | WebSocket: streams a snapshot each control tick |
 
-Flags: `-config growcore.yaml` (config path), `-addr :8080` (overrides
-`server.addr`). All other settings — storage path, control interval, adapter —
-come from the config file.
+Flags: `-config` (config path) and `-addr` (overrides `server.addr`); all other
+settings — storage path, control interval, adapter — come from the config file.
 
-## Architecture notes
+## Architecture
 
-Grow Core is structured as the docs describe — a reconciliation engine that is
-independent of any single adapter:
+Grow Core is built around a pure control law that is independent of any single
+adapter:
 
 ```
 growcore/internal/
-├── config/     # YAML config: modes, adapters, device topology & entity bindings
-├── domain/     # semantic model: environment, device, channel, role
-├── control/    # pure control law + reconciliation loop + Adapter interface
-├── sim/        # simulator adapter
-├── ha/         # Home Assistant adapter (WebSocket state + REST commands)
-├── integrations/ # external-service bundles, secrets and capability runtimes
-├── store/      # SQLite persistence
-└── api/        # HTTP + WebSocket
+├── config/        # YAML config: modes, adapters, topology & entity bindings
+├── domain/        # semantic model: environment, device, channel, role
+├── control/       # pure control law + reconciliation loop + Adapter interface
+├── sim/           # simulator adapter
+├── ha/            # Home Assistant adapter (WebSocket state + REST commands)
+├── catalog/       # supported-device catalog
+├── catalogsource/ # runtime custom catalog sources
+├── integrations/  # external-service bundles, secrets and capability runtimes
+├── store/         # SQLite persistence
+└── api/           # HTTP + WebSocket
 ```
 
-Adapters implement `control.Adapter`, so the engine and the pure control law
-(`control.ChannelSpeed`, unit tested via `go test ./...`) are identical whether
-devices are simulated or reached through Home Assistant. New adapters (e.g.
-direct MQTT) slot in behind the same interface without touching domain logic.
+Adapters implement `control.Adapter`, so the engine and the unit-tested control
+law (`go test ./...`) behave identically whether devices are simulated or
+reached through Home Assistant. External services stay separate from devices:
+integration bundles are configured as instances whose secret fields are AES-GCM
+encrypted with a local key and never returned by the API.
 
-External services are deliberately separate from adapters and devices. Bundle
-definitions live under `catalog/integrations/<category>/<id>/integration.yaml`; users
-configure instances under **Control panel → Integrations**. Secret fields are
-AES-GCM encrypted using a local `0600` key beside the Grow Core database and
-are never returned by the API. Production builds embed the bundle tree while
-development loads it directly from disk.
-
-### Deviations from the target design
-
-- **Storage** uses the pure-Go `modernc.org/sqlite` driver (no CGO) rather than
-  a CGO build, to keep cross-compilation for the Grow Hub trivial. Schema and
-  API are unchanged.
-- The Home Assistant adapter uses **`fan.set_percentage`** for commands. If your
-  ESPHome PWM outputs are exposed as `number`/`light` entities instead of `fan`
-  entities, that service call needs adjusting.
-
-## Next steps (per roadmap)
-
-- Direct MQTT adapter with one authoritative adapter per controller (Phase 3).
-- Controller health/presence and command timeout surfaced in the UI.
-- Recipes and cycles (phase-based targets over time).
-- Manual overrides and alerts.
+The [roadmap](https://growrig.dev/docs/roadmap/) tracks what comes next.
