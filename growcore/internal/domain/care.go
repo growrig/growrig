@@ -40,6 +40,14 @@ type CareEvent struct {
 	RunoffML float64 `json:"runoffMl,omitempty"`
 	RunoffPH float64 `json:"runoffPh,omitempty"`
 
+	// Doses is what each plant received of a recipe's non-liquid products, keyed
+	// by FeedingProduct.Key, in that product's unit — "2 tablets and 1 g of
+	// mycorrhiza per plant". It records amendments, which are dosed per plant or
+	// per pot rather than per litre of solution, so they cannot be expressed by
+	// CareApplication.AmountML. The amount is per plant, not per event: the
+	// event's Applications say which plants got it.
+	Doses map[string]float64 `json:"doses,omitempty"`
+
 	CreatedAt time.Time `json:"createdAt"`
 
 	// Applications record what each targeted plant received in this event.

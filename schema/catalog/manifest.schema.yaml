@@ -35,4 +35,4 @@ properties:
     minItems: 1
     uniqueItems: true
     items:
-      enum: [devices, integrations, species, inventory, vendors]
+      enum: [devices, integrations, species, inventory, vendors, mediums]

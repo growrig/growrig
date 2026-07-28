@@ -3,6 +3,8 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -117,6 +119,7 @@ type careConfigBody struct {
 var validCareFields = map[string]bool{
 	"amount": true, "runoff": true, "recipe": true, "ph": true, "ec": true,
 	"note": true, "photos": true, "potSize": true, "product": true, "trainType": true,
+	"doses": true,
 }
 
 func (s *Server) putCareConfig(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +201,9 @@ type careEventView struct {
 	domain.CareEvent
 	Applications []careApplicationView `json:"applications"`
 	RecipeName   string                `json:"recipeName,omitempty"`
+	// DosesLabel is Doses rendered for display ("2 tabs · 1 g Mycotrex"), so
+	// clients don't each re-resolve product keys against the recipe.
+	DosesLabel string `json:"dosesLabel,omitempty"`
 }
 
 // careSkip flags a plant left out of the grow's most recent care action.
@@ -242,8 +248,55 @@ func (s *Server) recipeName(id string) string {
 	return ""
 }
 
+// doseSummary renders an amendment's per-plant doses for display, e.g.
+// "2 tabs · 1 g Mycotrex" — resolving each product key against its recipe for
+// the label and unit. Keys the recipe no longer knows are shown bare rather
+// than dropped, so a renamed product doesn't silently erase history.
+func (s *Server) doseSummary(recipeID string, doses map[string]float64) string {
+	if len(doses) == 0 {
+		return ""
+	}
+	labels := map[string]domain.FeedingProduct{}
+	unit := ""
+	if r, ok, _ := s.store.FeedingRecipe(recipeID); ok {
+		unit = r.Unit
+		for _, p := range r.Products {
+			labels[p.Key] = p
+		}
+	}
+	// Map order is random; sort by key so the same event reads the same twice.
+	keys := make([]string, 0, len(doses))
+	for k := range doses {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		p, known := labels[k]
+		u := unit
+		if p.Unit != "" {
+			u = p.Unit
+		}
+		label := k
+		if known && p.Label != "" {
+			label = p.Label
+		}
+		parts = append(parts, strings.TrimSpace(fmt.Sprintf("%s %s %s", trimFloat(doses[k]), u, label)))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// trimFloat prints a dose without trailing zeros: 2 not 2.00, 1.5 not 1.50.
+func trimFloat(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
 func (s *Server) toCareEventView(e domain.CareEvent, plants map[string]domain.PlantUnit) careEventView {
-	v := careEventView{CareEvent: e, RecipeName: s.recipeName(e.RecipeID)}
+	v := careEventView{
+		CareEvent:  e,
+		RecipeName: s.recipeName(e.RecipeID),
+		DosesLabel: s.doseSummary(e.RecipeID, e.Doses),
+	}
 	v.Applications = make([]careApplicationView, 0, len(e.Applications))
 	for _, a := range e.Applications {
 		label := a.PlantUnitID
@@ -341,6 +394,7 @@ type logCareBody struct {
 	EC           float64                `json:"ec"`
 	RunoffML     float64                `json:"runoffMl"`
 	RunoffPH     float64                `json:"runoffPh"`
+	Doses        map[string]float64     `json:"doses"`
 	AmountML     float64                `json:"amountMl"`
 	PlantUnitIDs []string               `json:"plantUnitIds"`
 	Applications []careApplicationInput `json:"applications"`
@@ -411,6 +465,7 @@ func (s *Server) logCare(w http.ResponseWriter, r *http.Request) {
 		EC:         b.EC,
 		RunoffML:   b.RunoffML,
 		RunoffPH:   b.RunoffPH,
+		Doses:      positiveDoses(b.Doses),
 		CreatedAt:  time.Now(),
 	}
 	for _, in := range inputs {
@@ -430,7 +485,8 @@ func (s *Server) logCare(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.growActivity(grow.ID, "", "info", "care", careJournalMessage(action, event, s.recipeName(event.RecipeID)))
+	s.growActivity(grow.ID, "", "info", "care",
+		careJournalMessage(action, event, s.recipeName(event.RecipeID), s.doseSummary(event.RecipeID, event.Doses)))
 	writeJSON(w, http.StatusOK, s.toCareEventView(event, plants))
 }
 
@@ -440,6 +496,23 @@ func (s *Server) deleteCare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// positiveDoses drops blank and non-positive entries so an untouched dose input
+// doesn't persist as "0 tablets per plant". Returns nil when nothing remains.
+func positiveDoses(in map[string]float64) map[string]float64 {
+	var out map[string]float64
+	for k, v := range in {
+		key := strings.TrimSpace(k)
+		if key == "" || v <= 0 {
+			continue
+		}
+		if out == nil {
+			out = map[string]float64{}
+		}
+		out[key] = v
+	}
+	return out
 }
 
 func careSource(v string) domain.CareSource {
@@ -452,7 +525,7 @@ func careSource(v string) domain.CareSource {
 // careJournalMessage renders the grouped, human-readable activity-log line for a
 // care event, e.g. "Watered 4 plants · 3.2 L total" or "Fed all plants · Veg
 // Base · EC 1.4".
-func careJournalMessage(action species.CareAction, e domain.CareEvent, recipe string) string {
+func careJournalMessage(action species.CareAction, e domain.CareEvent, recipe, doses string) string {
 	n := len(e.Applications)
 	verb := careVerb(action)
 	msg := fmt.Sprintf("%s %s", verb, plantsPhrase(n))
@@ -462,6 +535,10 @@ func careJournalMessage(action species.CareAction, e domain.CareEvent, recipe st
 	}
 	if recipe != "" {
 		parts = append(parts, recipe)
+	}
+	if doses != "" {
+		// Amendments are per plant, so say so — "2 tabs" alone is ambiguous.
+		parts = append(parts, doses+" per plant")
 	}
 	if e.EC > 0 {
 		parts = append(parts, fmt.Sprintf("EC %.1f", e.EC))

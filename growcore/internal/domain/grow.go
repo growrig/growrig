@@ -88,7 +88,13 @@ var DefaultStageLightHours = map[string]float64{
 // is a property of the physical environment (see Binding.IrrigationType), which
 // the grow references rather than duplicates.
 type GrowingSetup struct {
-	Medium         string  `json:"medium,omitempty"`         // soil | coco | soilless | hydroponic | aeroponic
+	Medium string `json:"medium,omitempty"` // soil | coco | soilless | hydroponic | aeroponic
+	// MediumRecipeID references a MediumRecipe describing what the substrate is
+	// actually mixed from. It is the grow's default: a plant with its own
+	// MediumRecipeID overrides it, and an empty value on the plant means
+	// "inherit this one". MediumDetails remains the free-text escape hatch for
+	// a mix that hasn't been written up as a recipe.
+	MediumRecipeID string  `json:"mediumRecipeId,omitempty"`
 	MediumDetails  string  `json:"mediumDetails,omitempty"`  // free text: product / composition
 	NutrientMethod string  `json:"nutrientMethod,omitempty"` // organic | mineral | living-soil
 	PotSize        float64 `json:"potSize,omitempty"`        // default container volume
@@ -117,15 +123,18 @@ type Grow struct {
 // PlantUnit is one tracked plant or a group (tray/bed/batch) within a grow. Its
 // cultivar is set per unit so a single grow can carry several cultivars.
 type PlantUnit struct {
-	ID        string       `json:"id"`
-	GrowID    string       `json:"growId"`
-	Label     string       `json:"label"`
-	Slug      string       `json:"slug"` // URL-friendly form of Label, derived on save
-	Cultivar  string       `json:"cultivar"`
-	Tracking  TrackingMode `json:"tracking"`
-	Quantity  int          `json:"quantity"` // >1 for groups; 1 for individuals
-	Status    PlantStatus  `json:"status"`
-	CreatedAt time.Time    `json:"createdAt"`
+	ID       string `json:"id"`
+	GrowID   string `json:"growId"`
+	Label    string `json:"label"`
+	Slug     string `json:"slug"` // URL-friendly form of Label, derived on save
+	Cultivar string `json:"cultivar"`
+	// MediumRecipeID overrides the grow's medium recipe for this plant; empty
+	// means it inherits GrowingSetup.MediumRecipeID.
+	MediumRecipeID string       `json:"mediumRecipeId,omitempty"`
+	Tracking       TrackingMode `json:"tracking"`
+	Quantity       int          `json:"quantity"` // >1 for groups; 1 for individuals
+	Status         PlantStatus  `json:"status"`
+	CreatedAt      time.Time    `json:"createdAt"`
 }
 
 // PlantPlacement records that a plant unit occupied an environment for a span of
@@ -136,7 +145,7 @@ type PlantPlacement struct {
 	PlantUnitID   string     `json:"plantUnitId"`
 	EnvironmentID string     `json:"environmentId"`
 	StartedAt     time.Time  `json:"startedAt"`
-	EndedAt       *time.Time `json:"endedAt,omitempty"` // nil = current
+	EndedAt       *time.Time `json:"endedAt,omitempty"`  // nil = current
 	Position      string     `json:"position,omitempty"` // optional, e.g. "A1"
 }
 

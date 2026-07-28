@@ -315,7 +315,7 @@ func (s *Server) getGrow(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	detail := growDetail{
-		Grow:          grow,
+		Grow:           grow,
 		StageDays:      domain.DaysSince(grow.StageStarted, now),
 		TotalDays:      domain.DaysSince(grow.StartedAt, now),
 		EstimatedDays:  species.EstimatedDays(grow.Species, grow.Stages),
@@ -436,6 +436,7 @@ type plantBody struct {
 // pot unit, so stored GrowingSetup values are clean and consistent.
 func normalizeSetup(g domain.GrowingSetup) domain.GrowingSetup {
 	g.Medium = strings.TrimSpace(g.Medium)
+	g.MediumRecipeID = strings.TrimSpace(g.MediumRecipeID)
 	g.MediumDetails = strings.TrimSpace(g.MediumDetails)
 	g.NutrientMethod = strings.TrimSpace(g.NutrientMethod)
 	g.PotType = strings.TrimSpace(g.PotType)
@@ -531,6 +532,10 @@ type updatePlantBody struct {
 	Cultivar string              `json:"cultivar"`
 	Tracking domain.TrackingMode `json:"tracking"` // omitted/invalid leaves it unchanged
 	Quantity *int                `json:"quantity"` // pointer: omitted leaves quantity unchanged
+	// MediumRecipeID overrides the grow's medium recipe for this plant. A
+	// pointer so omitting it leaves the override untouched, while an explicit
+	// "" clears it back to inheriting the grow's.
+	MediumRecipeID *string `json:"mediumRecipeId"`
 }
 
 // updatePlant edits a plant unit's per-unit attributes (label, cultivar, and —
@@ -562,6 +567,9 @@ func (s *Server) updatePlant(w http.ResponseWriter, r *http.Request) {
 		unit.Quantity = 1
 	} else if b.Quantity != nil && *b.Quantity > 0 {
 		unit.Quantity = *b.Quantity
+	}
+	if b.MediumRecipeID != nil {
+		unit.MediumRecipeID = strings.TrimSpace(*b.MediumRecipeID)
 	}
 	if err := s.store.SavePlantUnit(unit); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)

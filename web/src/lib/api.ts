@@ -2,6 +2,12 @@
 // (embedded, single binary) the base is same-origin. For local development
 // against a separately-running Grow Core, set VITE_GROWCORE_URL.
 import type {
+	HistoryEntry,
+	HistoryKind,
+	HistoryPage,
+	MediumRecipe,
+	MediumComponent,
+	MediumAmendment,
 	Binding,
 	Activity,
 	Alert,
@@ -655,6 +661,38 @@ export const updateRecipe = (id: string, p: RecipeInput) =>
 export const deleteRecipe = (id: string) =>
 	req(`/api/recipes/${encodeURIComponent(id)}`, { method: 'DELETE' });
 
+// --- Medium recipes: what a substrate is mixed from ---
+
+export const getMediumRecipes = () => json<MediumRecipe[]>('/api/medium-recipes');
+
+/** Built-in mixes, offered only as templates to seed a new recipe. */
+export const getMediumRecipeTemplates = () =>
+	json<MediumRecipe[]>('/api/medium-recipe-templates');
+
+export const getMediumRecipe = (id: string) =>
+	json<MediumRecipe>(`/api/medium-recipes/${encodeURIComponent(id)}`);
+
+export interface MediumRecipeInput {
+	name: string;
+	description: string;
+	species: string;
+	base: string;
+	components: MediumComponent[];
+	amendments: MediumAmendment[];
+}
+
+export const createMediumRecipe = (p: MediumRecipeInput) =>
+	json<MediumRecipe>('/api/medium-recipes', { method: 'POST', body: JSON.stringify(p) });
+
+export const updateMediumRecipe = (id: string, p: MediumRecipeInput) =>
+	json<MediumRecipe>(`/api/medium-recipes/${encodeURIComponent(id)}`, {
+		method: 'PUT',
+		body: JSON.stringify(p)
+	});
+
+export const deleteMediumRecipe = (id: string) =>
+	req(`/api/medium-recipes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
 /** Authenticated same-origin URL for a cultivar's stored image. */
 export const cultivarImageURL = (id: string): string =>
 	authenticatedMediaURL(`/api/cultivars/${encodeURIComponent(id)}/image`);
@@ -737,6 +775,33 @@ export interface ActivityPage {
 }
 
 /** Clear the entire activity log (admin). */
+// --- History: one collection's merged story, paged server-side ---
+
+/**
+ * Fetch a page of history for exactly one collection. Merging and paging happen
+ * in the database: a client can't page a merged stream correctly without
+ * holding every source in full.
+ */
+export const getHistory = (opts: {
+	growId?: string;
+	plantId?: string;
+	environmentId?: string;
+	kinds?: HistoryKind[];
+	automation?: boolean;
+	limit?: number;
+	offset?: number;
+}): Promise<HistoryPage> => {
+	const params = new URLSearchParams();
+	if (opts.growId) params.set('growId', opts.growId);
+	if (opts.plantId) params.set('plantId', opts.plantId);
+	if (opts.environmentId) params.set('environmentId', opts.environmentId);
+	if (opts.kinds?.length) params.set('kinds', opts.kinds.join(','));
+	if (opts.automation) params.set('automation', 'true');
+	params.set('limit', String(opts.limit ?? 50));
+	if (opts.offset) params.set('offset', String(opts.offset));
+	return json<HistoryPage>(`/api/history?${params}`);
+};
+
 export const clearActivity = () => req('/api/activity', { method: 'DELETE' });
 
 /** Trigger a graceful restart of Grow Core (admin). Under a process supervisor

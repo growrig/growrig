@@ -95,7 +95,7 @@
 						<div class="mt-0.5 text-xs capitalize {statusTone(p.status)}">{p.status} · Day {daysSince(p.createdAt)}</div>
 						<div class="mt-2 space-y-0.5 text-xs text-rig-400">
 							{#if p.currentEnvironmentId}
-								<div><a href="/env/{p.currentEnvironmentId}" class="relative z-10 hover:text-leaf">{p.currentEnvironmentName || p.currentEnvironmentId}</a>{#if p.currentPot} · {p.currentPot.size} {p.currentPot.unit} pot{/if}</div>
+								<div><a href="/env/{p.currentEnvironmentId}" class="relative z-10 hover:underline">{p.currentEnvironmentName || p.currentEnvironmentId}</a>{#if p.currentPot} · {p.currentPot.size} {p.currentPot.unit} pot{/if}</div>
 							{/if}
 							{#if p.tracking === 'group' && p.quantity > 1}<div class="text-rig-500">Group ×{p.quantity}</div>{/if}
 						</div>
@@ -123,9 +123,9 @@
 						class="cursor-pointer border-b border-rig-800/60 transition-colors last:border-0 hover:bg-rig-800/40"
 						onclick={() => goto(`/plants/${p.id}`)}
 					>
-						<td class="px-4 py-2"><a href="/plants/{p.id}" class="font-medium hover:text-leaf" onclick={(e) => e.stopPropagation()}>{plantDisplayName(p, plantNumbers.get(p.id))}</a>{#if p.tracking === 'group' && p.quantity > 1}<span class="ml-1 text-xs text-rig-500">×{p.quantity}</span>{/if}</td>
+						<td class="px-4 py-2"><a href="/plants/{p.id}" class="font-medium hover:underline" onclick={(e) => e.stopPropagation()}>{plantDisplayName(p, plantNumbers.get(p.id))}</a>{#if p.tracking === 'group' && p.quantity > 1}<span class="ml-1 text-xs text-rig-500">×{p.quantity}</span>{/if}</td>
 						<td class="px-4 py-2 capitalize {statusTone(p.status)}">{p.status}</td>
-						<td class="px-4 py-2 text-rig-300">{#if p.currentEnvironmentId}<a href="/env/{p.currentEnvironmentId}" class="hover:text-leaf hover:underline" onclick={(e) => e.stopPropagation()}>{p.currentEnvironmentName || p.currentEnvironmentId}</a>{:else}—{/if}</td>
+						<td class="px-4 py-2 text-rig-300">{#if p.currentEnvironmentId}<a href="/env/{p.currentEnvironmentId}" class="hover:underline" onclick={(e) => e.stopPropagation()}>{p.currentEnvironmentName || p.currentEnvironmentId}</a>{:else}—{/if}</td>
 						<td class="px-4 py-2 tabular-nums text-rig-300">{p.currentPot ? `${p.currentPot.size} ${p.currentPot.unit}` : '—'}</td>
 						<td class="px-4 py-2 tabular-nums text-rig-400">{daysSince(p.createdAt)}d</td>
 						<!-- svelte-ignore a11y_no_static_element_interactions -->

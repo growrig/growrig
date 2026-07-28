@@ -26,6 +26,7 @@ var schemaData embed.FS
 // schemaNames are the logical schemas, each backing one catalog file kind.
 var schemaNames = []string{
 	"manifest", "device", "integration", "species", "feedings", "inventory", "products", "vendor",
+	"mediums",
 }
 
 type schemaSet struct {
@@ -159,6 +160,8 @@ func validateCatalogContent(root string, provides []string) error {
 			}
 		case "vendors":
 			err = validateGlob(set, "vendor", root, "vendors", "*", "vendor.yaml")
+		case "mediums":
+			err = validateGlob(set, "mediums", root, "mediums", "mediums.yaml")
 		}
 		if err != nil {
 			return err

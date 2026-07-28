@@ -9,23 +9,29 @@
 		cultivarImageURL,
 		getRecipes,
 		getRecipeTemplates,
-		deleteRecipe
+		deleteRecipe,
+		getMediumRecipes,
+		getMediumRecipeTemplates,
+		deleteMediumRecipe
 	} from '$lib/api';
-	import type { Species, Cultivar, FeedingRecipe } from '$lib/types';
+	import type { Species, Cultivar, FeedingRecipe, MediumRecipe } from '$lib/types';
 	import { titleCase } from '$lib/format';
 	import CultivarFormModal from '$lib/components/CultivarFormModal.svelte';
 	import RecipeFormModal from '$lib/components/RecipeFormModal.svelte';
+	import MediumRecipeFormModal from '$lib/components/MediumRecipeFormModal.svelte';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Dna from '@lucide/svelte/icons/dna';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import FlaskConical from '@lucide/svelte/icons/flask-conical';
 	import Leaf from '@lucide/svelte/icons/leaf';
+	import Layers from '@lucide/svelte/icons/layers';
 
-	type Tab = 'recipes' | 'cultivars' | 'species';
+	type Tab = 'recipes' | 'mediums' | 'cultivars' | 'species';
 	let tab = $state<Tab>('recipes');
 	const tabs: { id: Tab; label: string }[] = [
 		{ id: 'recipes', label: 'Recipes' },
+		{ id: 'mediums', label: 'Mediums' },
 		{ id: 'cultivars', label: 'Cultivars' },
 		{ id: 'species', label: 'Species' }
 	];
@@ -42,6 +48,13 @@
 	let editingFeeding = $state<FeedingRecipe | undefined>(undefined);
 	let feedingModalOpen = $state(false);
 
+	// Medium recipes: the user's own (shown in the table) plus built-in mixes
+	// (offered as templates inside the create form), mirroring feeding recipes.
+	let mediums = $state<MediumRecipe[]>([]);
+	let mediumTemplates = $state<MediumRecipe[]>([]);
+	let editingMedium = $state<MediumRecipe | undefined>(undefined);
+	let mediumModalOpen = $state(false);
+
 	const speciesById = $derived(new Map(species.map((s) => [s.id, s])));
 
 	onMount(() => {
@@ -49,6 +62,8 @@
 		refreshCultivars();
 		refreshFeedings();
 		getRecipeTemplates().then((t) => (feedingTemplates = t)).catch(() => {});
+		refreshMediums();
+		getMediumRecipeTemplates().then((t) => (mediumTemplates = t)).catch(() => {});
 	});
 
 	function refreshCultivars() {
@@ -91,6 +106,44 @@
 		return (f.phases ?? []).reduce((n, ph) => n + (ph.weeks?.length ?? 0), 0);
 	}
 
+	// Event-triggered phases have no weeks, so a schedule built mostly from
+	// amendments would otherwise read as an empty "0 weeks" recipe.
+	function oneShotCount(f: FeedingRecipe): number {
+		return (f.phases ?? []).filter((ph) => ph.trigger).length;
+	}
+
+	function refreshMediums() {
+		getMediumRecipes().then((m) => (mediums = m)).catch(() => {});
+	}
+
+	function newMedium() {
+		editingMedium = undefined;
+		mediumModalOpen = true;
+	}
+	function editMedium(m: MediumRecipe) {
+		editingMedium = m;
+		mediumModalOpen = true;
+	}
+	async function removeMedium(m: MediumRecipe) {
+		if (!confirm(`Delete medium recipe \u201c${m.name}\u201d?`)) return;
+		try {
+			await deleteMediumRecipe(m.id);
+			toast.success('Medium recipe deleted', { description: m.name });
+			refreshMediums();
+		} catch (e) {
+			toast.error('Could not delete medium recipe', { description: m.name });
+		}
+	}
+
+	/** "70% coco coir \u00b7 30% perlite" \u2014 the mix at a glance. */
+	function mixSummary(m: MediumRecipe): string {
+		return (m.components ?? []).map((c) => `${c.percent}% ${c.label.toLowerCase()}`).join(' \u00b7 ');
+	}
+
+	function mixTotal(m: MediumRecipe): number {
+		return (m.components ?? []).reduce((n, c) => n + c.percent, 0);
+	}
+
 	function newCultivar() {
 		editingCultivar = undefined;
 		cultivarModalOpen = true;
@@ -131,7 +184,8 @@
 <div class="mb-6">
 	<h1 class="text-2xl font-semibold">Library</h1>
 	<p class="text-sm text-rig-400">
-		Reusable reference data for your grows — feeding recipes, cultivars and species definitions.
+		Reusable reference data for your grows — feeding recipes, medium mixes, cultivars and species
+		definitions.
 	</p>
 </div>
 
@@ -214,7 +268,14 @@
 								</td>
 								<td class="px-4 py-2.5 text-center text-rig-300">{f.products?.length ?? 0}</td>
 								<td class="px-4 py-2.5 text-center text-rig-300">{f.phases?.length ?? 0}</td>
-								<td class="px-4 py-2.5 text-center text-rig-300">{weekCount(f)}</td>
+								<td class="px-4 py-2.5 text-center text-rig-300">
+									{weekCount(f)}
+									{#if oneShotCount(f)}
+										<span class="ml-1 text-[11px] text-rig-500" title="One-shot applications (planting, transplant, top-dress)">
+											+{oneShotCount(f)} one-shot
+										</span>
+									{/if}
+								</td>
 								{#if auth.isAdmin}
 									<td class="px-4 py-2.5">
 										<div class="flex justify-end gap-1">
@@ -242,6 +303,109 @@
 			</div>
 		{/if}
 	</section>
+{:else if tab === 'mediums'}
+	<!-- Medium recipes: what a substrate is mixed from (built-in + user). -->
+	<section>
+		<div class="mb-3 flex items-center justify-between gap-4">
+			<h2 class="text-sm font-semibold uppercase tracking-wide text-rig-400">
+				Medium recipes{mediums.length ? ` \u00b7 ${mediums.length}` : ''}
+			</h2>
+			{#if auth.isAdmin && mediums.length}
+				<button
+					onclick={newMedium}
+					class="inline-flex items-center gap-1.5 rounded-md border border-rig-700 px-3 py-1.5 text-xs font-medium text-rig-200 transition-colors hover:border-leaf hover:text-white"
+				>
+					<Plus size={14} /> New mix
+				</button>
+			{/if}
+		</div>
+		{#if mediums.length === 0}
+			<div class="rounded-xl border border-dashed border-rig-800 p-10 text-center">
+				<div class="mb-3 flex justify-center text-rig-500"><Layers size={40} /></div>
+				<h3 class="mb-1 text-lg font-semibold">No medium recipes yet</h3>
+				<p class="mb-5 text-sm text-rig-400">
+					Write down what your substrate is mixed from \u2014 ingredients by volume, plus anything
+					dosed per litre \u2014 then pick it when starting a grow.
+				</p>
+				{#if auth.isAdmin}
+					<button
+						onclick={newMedium}
+						class="rounded-md bg-rig-50 px-5 py-2 text-sm font-medium text-rig-950 transition-colors hover:bg-rig-200"
+					>
+						Add a mix
+					</button>
+				{/if}
+			</div>
+		{:else}
+			<div class="overflow-x-auto rounded-xl border border-rig-800">
+				<table class="w-full border-collapse text-sm">
+					<thead>
+						<tr class="border-b border-rig-800 bg-rig-900/50 text-left text-xs uppercase tracking-wide text-rig-500">
+							<th class="px-4 py-2.5 font-medium">Name</th>
+							<th class="px-4 py-2.5 font-medium">Mix</th>
+							<th class="px-4 py-2.5 font-medium">Produces</th>
+							<th class="px-4 py-2.5 text-center font-medium">Amendments</th>
+							{#if auth.isAdmin}<th class="px-4 py-2.5"></th>{/if}
+						</tr>
+					</thead>
+					<tbody>
+						{#each mediums as m (m.id)}
+							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+							<tr
+								class="border-b border-rig-800/60 last:border-0 hover:bg-rig-900/30"
+								class:cursor-pointer={auth.isAdmin}
+								onclick={() => auth.isAdmin && editMedium(m)}
+							>
+								<td class="px-4 py-2.5">
+									<div class="font-medium text-rig-100">{m.name}</div>
+									{#if m.description}
+										<div class="line-clamp-1 max-w-md text-xs text-rig-500">{m.description}</div>
+									{/if}
+								</td>
+								<td class="px-4 py-2.5 text-rig-300">
+									<span class="line-clamp-1 max-w-md">{mixSummary(m) || '\u2014'}</span>
+									{#if Math.abs(mixTotal(m) - 100) > 0.01}
+										<span class="text-[11px] text-warn" title="A mix should add up to 100%">
+											totals {mixTotal(m)}%
+										</span>
+									{/if}
+								</td>
+								<td class="px-4 py-2.5">
+									{#if m.base}
+										<span class="rounded-full bg-rig-800 px-2 py-0.5 text-[11px] capitalize text-rig-300">
+											{m.base}
+										</span>
+									{:else}<span class="text-rig-600">\u2014</span>{/if}
+								</td>
+								<td class="px-4 py-2.5 text-center text-rig-300">{m.amendments?.length ?? 0}</td>
+								{#if auth.isAdmin}
+									<td class="px-4 py-2.5">
+										<div class="flex justify-end gap-1">
+											<button
+												onclick={(e) => { e.stopPropagation(); editMedium(m); }}
+												aria-label="Edit medium recipe"
+												class="rounded p-1.5 text-rig-400 hover:text-rig-100"
+											>
+												<Pencil size={14} />
+											</button>
+											<button
+												onclick={(e) => { e.stopPropagation(); removeMedium(m); }}
+												aria-label="Delete medium recipe"
+												class="rounded p-1.5 text-rig-400 hover:text-danger"
+											>
+												<Trash2 size={14} />
+											</button>
+										</div>
+									</td>
+								{/if}
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</section>
+
 {:else if tab === 'cultivars'}
 	<section>
 		<div class="mb-3 flex items-center justify-between gap-4">
@@ -402,5 +566,12 @@
 		{species}
 		templates={feedingTemplates}
 		onSaved={refreshFeedings}
+	/>
+	<MediumRecipeFormModal
+		bind:open={mediumModalOpen}
+		recipe={editingMedium}
+		{species}
+		templates={mediumTemplates}
+		onSaved={refreshMediums}
 	/>
 {/if}

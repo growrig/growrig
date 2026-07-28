@@ -50,6 +50,8 @@
 	let trainType = $state('');
 	let product = $state('');
 	let potSize = $state<number | null>(null);
+	// Amendment doses: product key -> amount per plant, in that product's unit.
+	let doses = $state<Record<string, number | null>>({});
 
 	const activePlants = $derived(grow.plants.filter((p) => p.status === 'active'));
 	const plantNumbers = $derived(plantNumbersById(grow.plants));
@@ -89,6 +91,8 @@
 		trainType = '';
 		product = '';
 		potSize = null;
+		doses = {};
+		amendPhase = '';
 		err = '';
 	}
 
@@ -129,6 +133,14 @@
 		try {
 			const body: LogCareInput = { type: action.key, notes: composedNote() };
 			if (has('recipe') && recipeId) body.recipeId = recipeId;
+			if (has('doses')) {
+				const out: Record<string, number> = {};
+				for (const [k, v] of Object.entries(doses)) {
+					const n = typeof v === 'number' ? v : parseFloat(String(v));
+					if (Number.isFinite(n) && n > 0) out[k] = n;
+				}
+				if (Object.keys(out).length) body.doses = out;
+			}
 			if (has('ph') && ph != null) body.ph = ph;
 			if (has('ec') && ec != null) body.ec = ec;
 			if (has('runoff')) {
@@ -161,6 +173,47 @@
 		{ value: '', label: '— No recipe —' },
 		...recipes.map((r) => ({ value: r.id, label: r.brand ? `${r.name} · ${r.brand}` : r.name }))
 	]);
+
+	// --- Amendments (the `doses` field) ---
+
+	const selectedRecipe = $derived(recipes.find((r) => r.id === recipeId));
+	/** The recipe's one-shot applications, offered as dose prefills. */
+	const oneShotPhases = $derived((selectedRecipe?.phases ?? []).filter((ph) => ph.trigger));
+	let amendPhase = $state('');
+	const amendPhaseItems = $derived([
+		{ value: '', label: '— Custom amounts —' },
+		...oneShotPhases.map((ph) => ({ value: ph.name, label: ph.name }))
+	]);
+
+	/**
+	 * Products worth showing a dose input for: everything the chosen phase doses,
+	 * plus any product measured per plant/pot/substrate, since those are the ones
+	 * that can't be expressed as a watering amount.
+	 */
+	const amendProducts = $derived.by(() => {
+		const r = selectedRecipe;
+		if (!r) return [];
+		const phase = oneShotPhases.find((ph) => ph.name === amendPhase);
+		const inPhase = new Set(Object.keys(phase?.doses ?? {}));
+		return (r.products ?? []).filter((p) => inPhase.has(p.key) || !!p.basis);
+	});
+
+	const basisLabel: Record<string, string> = {
+		plant: 'per plant',
+		pot: 'per pot',
+		substrate: 'per L substrate'
+	};
+	function doseUnit(key: string): string {
+		const p = selectedRecipe?.products?.find((x) => x.key === key);
+		const unit = p?.unit?.trim() || selectedRecipe?.unit?.trim() || '';
+		return p?.basis ? `${unit} ${basisLabel[p.basis] ?? ''}`.trim() : unit;
+	}
+
+	/** Prefill the dose inputs from the chosen one-shot phase (blank = clear). */
+	function applyAmendPhase() {
+		const phase = oneShotPhases.find((ph) => ph.name === amendPhase);
+		doses = { ...(phase?.doses ?? {}) };
+	}
 
 	const field =
 		'w-full rounded-md border border-rig-700 bg-rig-950 px-3 py-1.5 text-sm focus:border-leaf focus:outline-none';
@@ -223,6 +276,52 @@
 						<span class="text-xs text-rig-400">Nutrient recipe</span>
 						<Select class="mt-1" bind:value={recipeId} items={recipeItems} />
 					</label>
+				{/if}
+
+				{#if has('doses')}
+					<div class="rounded-lg border border-rig-800 p-3">
+						<span class="text-xs font-medium text-rig-300">Amendment</span>
+						{#if !selectedRecipe}
+							<p class="mt-1 text-xs text-rig-500">
+								Pick a nutrient recipe above to dose its amendments.
+							</p>
+						{:else}
+							{#if oneShotPhases.length}
+								<Select
+									class="mt-1.5"
+									bind:value={amendPhase}
+									placeholder="— Custom amounts —"
+									onValueChange={applyAmendPhase}
+									items={amendPhaseItems}
+								/>
+							{/if}
+							{#if amendProducts.length === 0}
+								<p class="mt-1.5 text-xs text-rig-500">
+									This recipe has no amendments — its products are all dosed per litre of solution.
+								</p>
+							{:else}
+								<div class="mt-2 space-y-1.5">
+									{#each amendProducts as p (p.key)}
+										<div class="flex items-center gap-2">
+											<span class="min-w-0 flex-1 truncate text-sm text-rig-200">{p.label}</span>
+											<input
+												type="number"
+												inputmode="decimal"
+												step="any"
+												min="0"
+												bind:value={doses[p.key]}
+												class="w-20 rounded-md border border-rig-700 bg-rig-950 px-2 py-1 text-center text-sm focus:border-leaf focus:outline-none"
+											/>
+											<span class="w-28 shrink-0 text-[11px] text-rig-500">{doseUnit(p.key)}</span>
+										</div>
+									{/each}
+								</div>
+								<p class="mt-2 text-[11px] text-rig-500">
+									Amounts are what each selected plant receives.
+								</p>
+							{/if}
+						{/if}
+					</div>
 				{/if}
 
 				{#if has('amount')}

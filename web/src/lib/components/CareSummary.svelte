@@ -23,6 +23,7 @@
 	function detail(e: CareEvent): string {
 		const bits: string[] = [];
 		if (e.recipeName) bits.push(e.recipeName);
+		if (e.dosesLabel) bits.push(`${e.dosesLabel} per plant`);
 		const ml = (e.applications ?? []).reduce((s, a) => s + (a.amountMl ?? 0), 0);
 		if (ml > 0) bits.push(fmtVolume(ml));
 		if (e.ph) bits.push(`pH ${e.ph}`);

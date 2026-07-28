@@ -478,7 +478,7 @@
 				<h1 class="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-rig-400">
 					<Sprout size={14} /> Active Grows
 				</h1>
-				<a href="/grows" class="text-xs text-rig-500 hover:text-leaf">Manage grows</a>
+				<a href="/grows" class="text-xs text-rig-500 hover:underline">Manage grows</a>
 			</div>
 			{#if activeGrows.length}
 				<div class="grid gap-3 sm:grid-cols-2">

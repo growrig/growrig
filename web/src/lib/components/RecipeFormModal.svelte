@@ -1,7 +1,14 @@
 <script lang="ts">
 	import { errMsg } from '$lib/errors';
 	import { toast } from '$lib/toast.svelte';
-	import type { FeedingRecipe, FeedingProduct, Species } from '$lib/types';
+	import type {
+		DoseBasis,
+		FeedingRecipe,
+		FeedingProduct,
+		FeedingPhase,
+		PhaseTrigger,
+		Species
+	} from '$lib/types';
 	import { createRecipe, updateRecipe, type RecipeInput } from '$lib/api';
 	import { Button, Dialog, Select } from '$lib/components/ui';
 	import { titleCase } from '$lib/format';
@@ -32,7 +39,27 @@
 
 	// Local editable shapes: dose values may be blank while typing.
 	type Week = { doses: Record<string, number | null> };
-	type Phase = { name: string; stage: string; weeks: Week[] };
+	type Phase = {
+		name: string;
+		stage: string;
+		/** '' = weekly phase; otherwise a one-shot applied at that event. */
+		trigger: PhaseTrigger | '';
+		doses: Record<string, number | null>;
+		weeks: Week[];
+	};
+
+	const basisItems: { value: DoseBasis | ''; label: string }[] = [
+		{ value: '', label: 'per L solution' },
+		{ value: 'plant', label: 'per plant' },
+		{ value: 'pot', label: 'per pot' },
+		{ value: 'substrate', label: 'per L substrate' }
+	];
+	const triggerItems: { value: PhaseTrigger | ''; label: string }[] = [
+		{ value: '', label: 'Weekly' },
+		{ value: 'planting', label: 'Once at planting' },
+		{ value: 'transplant', label: 'Once at transplant' },
+		{ value: 'topdress', label: 'Once when top-dressing' }
+	];
 
 	let speciesId = $state('');
 	let name = $state('');
@@ -56,6 +83,17 @@
 
 	const title = $derived(isEdit ? 'Edit feeding recipe' : 'New feeding recipe');
 
+	/** Server phase → local editable phase, shared by reseed and template fill. */
+	function toPhase(ph: FeedingPhase): Phase {
+		return {
+			name: ph.name,
+			stage: ph.stage ?? '',
+			trigger: ph.trigger ?? '',
+			doses: { ...(ph.doses ?? {}) },
+			weeks: (ph.weeks ?? []).map((wk) => ({ doses: { ...wk.doses } }))
+		};
+	}
+
 	// Reseed on open.
 	$effect(() => {
 		if (!open) return;
@@ -65,11 +103,7 @@
 		description = recipe?.description ?? '';
 		unit = recipe?.unit || 'ml/L';
 		products = (recipe?.products ?? []).map((p) => ({ ...p }));
-		phases = (recipe?.phases ?? []).map((ph) => ({
-			name: ph.name,
-			stage: ph.stage ?? '',
-			weeks: (ph.weeks ?? []).map((wk) => ({ doses: { ...wk.doses } }))
-		}));
+		phases = (recipe?.phases ?? []).map(toPhase);
 		templateId = '';
 		err = '';
 	});
@@ -83,11 +117,7 @@
 		description = t.description;
 		unit = t.unit || 'ml/L';
 		products = (t.products ?? []).map((p) => ({ ...p }));
-		phases = (t.phases ?? []).map((ph) => ({
-			name: ph.name,
-			stage: ph.stage ?? '',
-			weeks: (ph.weeks ?? []).map((wk) => ({ doses: { ...wk.doses } }))
-		}));
+		phases = (t.phases ?? []).map(toPhase);
 	}
 
 	function nextProductKey(): string {
@@ -102,11 +132,17 @@
 	function removeProduct(i: number) {
 		const key = products[i].key;
 		products = products.filter((_, k) => k !== i);
-		for (const ph of phases) for (const wk of ph.weeks) delete wk.doses[key];
+		for (const ph of phases) {
+			delete ph.doses[key];
+			for (const wk of ph.weeks) delete wk.doses[key];
+		}
 	}
 
 	function addPhase() {
-		phases = [...phases, { name: `Phase ${phases.length + 1}`, stage: '', weeks: [{ doses: {} }] }];
+		phases = [
+			...phases,
+			{ name: `Phase ${phases.length + 1}`, stage: '', trigger: '', doses: {}, weeks: [{ doses: {} }] }
+		];
 	}
 	function removePhase(i: number) {
 		phases = phases.filter((_, k) => k !== i);
@@ -129,6 +165,16 @@
 		return p.unit?.trim() || unit.trim();
 	}
 
+	/** Drop blank/zero entries and coerce the strings the inputs hand back. */
+	function cleanDoses(in_: Record<string, number | null>): Record<string, number> {
+		const out: Record<string, number> = {};
+		for (const [k, v] of Object.entries(in_)) {
+			const n = typeof v === 'number' ? v : parseFloat(String(v));
+			if (Number.isFinite(n) && n > 0) out[k] = n;
+		}
+		return out;
+	}
+
 	async function save() {
 		if (!canSave) return;
 		busy = true;
@@ -142,20 +188,22 @@
 				unit: unit.trim(),
 				products: products
 					.filter((p) => p.label.trim())
-					.map((p) => ({ key: p.key, label: p.label.trim(), ...(p.unit?.trim() ? { unit: p.unit.trim() } : {}) })),
+					.map((p) => ({
+						key: p.key,
+						label: p.label.trim(),
+						...(p.unit?.trim() ? { unit: p.unit.trim() } : {}),
+						...(p.basis ? { basis: p.basis } : {})
+					})),
 				phases: phases
 					.filter((ph) => ph.name.trim())
 					.map((ph) => ({
 						name: ph.name.trim(),
 						...(ph.stage ? { stage: ph.stage } : {}),
-						weeks: ph.weeks.map((wk) => {
-							const doses: Record<string, number> = {};
-							for (const [k, v] of Object.entries(wk.doses)) {
-								const n = typeof v === 'number' ? v : parseFloat(String(v));
-								if (Number.isFinite(n) && n > 0) doses[k] = n;
-							}
-							return { doses };
-						})
+						// One-shot phases carry a single dose map and no weeks; the
+						// server drops whichever half doesn't match the trigger anyway.
+						...(ph.trigger
+							? { trigger: ph.trigger, doses: cleanDoses(ph.doses), weeks: [] }
+							: { weeks: ph.weeks.map((wk) => ({ doses: cleanDoses(wk.doses) })) })
 					}))
 			};
 			const saved = isEdit ? await updateRecipe(recipe!.id, input) : await createRecipe(input);
@@ -259,6 +307,7 @@
 					<div class="flex items-center gap-2 px-0.5 text-[11px] text-rig-500">
 						<span class="flex-1">Product name</span>
 						<span class="w-20 shrink-0">Unit</span>
+						<span class="w-36 shrink-0">Dosed</span>
 						<span class="w-7 shrink-0"></span>
 					</div>
 					{#each products as p, i (p.key)}
@@ -269,6 +318,12 @@
 								placeholder={unit || 'unit'}
 								class="{cell} w-20 shrink-0 text-center"
 								title="Unit override (blank uses the default)"
+							/>
+							<Select
+								class="w-36 shrink-0"
+								bind:value={p.basis}
+								placeholder="per L solution"
+								items={basisItems}
 							/>
 							<button type="button" onclick={() => removeProduct(i)} aria-label="Remove product" class={iconBtn}>
 								<Trash2 size={14} />
@@ -300,6 +355,12 @@
 					<div class="mb-2 flex items-center gap-2">
 						<input bind:value={phase.name} placeholder="Phase name" class="{cell} min-w-0 flex-1" />
 						<Select
+							class="w-44 shrink-0"
+							bind:value={phase.trigger}
+							placeholder="Weekly"
+							items={triggerItems}
+						/>
+						<Select
 							class="w-40 shrink-0"
 							bind:value={phase.stage}
 							placeholder="No stage link"
@@ -327,6 +388,35 @@
 
 					{#if products.length === 0}
 						<p class="text-xs text-rig-500">Add products above to dose them here.</p>
+					{:else if phase.trigger}
+						<!-- One-shot: a single dose per product, no week timeline. -->
+						<p class="mb-2 text-xs text-rig-500">
+							Applied once {triggerItems
+								.find((t) => t.value === phase.trigger)
+								?.label.toLowerCase()
+								.replace(/^once /, '')} — leave a product blank if it isn't part of this
+							application.
+						</p>
+						<div class="space-y-1">
+							{#each products as p (p.key)}
+								<div class="flex items-center gap-2">
+									<span class="min-w-0 flex-1 truncate text-sm text-rig-200">{p.label || '—'}</span>
+									<input
+										type="number"
+										inputmode="decimal"
+										step="any"
+										min="0"
+										bind:value={phase.doses[p.key]}
+										class="w-16 rounded border border-rig-700 bg-rig-950 px-1.5 py-1 text-center text-xs focus:border-leaf focus:outline-none"
+									/>
+									<span class="w-28 shrink-0 text-[11px] text-rig-500">
+										{unitFor(p)}{p.basis
+											? ` ${basisItems.find((b) => b.value === p.basis)?.label}`
+											: ''}
+									</span>
+								</div>
+							{/each}
+						</div>
 					{:else}
 						<div class="overflow-x-auto">
 							<table class="w-full border-collapse text-sm">
@@ -365,7 +455,11 @@
 										<tr class="border-t border-rig-800/60">
 											<td class="sticky left-0 z-10 whitespace-nowrap bg-rig-900/40 py-1 pr-3">
 												<span class="text-rig-200">{p.label || '—'}</span>
-												<span class="ml-1 text-[10px] text-rig-500">{unitFor(p)}</span>
+												<span class="ml-1 text-[10px] text-rig-500">
+													{unitFor(p)}{p.basis
+														? ` ${basisItems.find((b) => b.value === p.basis)?.label}`
+														: ''}
+												</span>
 											</td>
 											{#each phase.weeks as _wk, wi (wi)}
 												<td class="px-1 py-1 text-center">

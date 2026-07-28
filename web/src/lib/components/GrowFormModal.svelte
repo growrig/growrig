@@ -8,9 +8,10 @@
 		Cultivar,
 		Environment,
 		TrackingMode,
-		PotUnit
+		PotUnit,
+		MediumRecipe
 	} from '$lib/types';
-	import { createGrow, updateGrow, getSpecies, getCultivars, getEnvironments, createPlant, speciesIconURL } from '$lib/api';
+	import { createGrow, updateGrow, getSpecies, getCultivars, getEnvironments, createPlant, speciesIconURL, getMediumRecipes, getMediumRecipeTemplates } from '$lib/api';
 	import { toast } from '$lib/toast.svelte';
 	import { Button, Dialog, Select, DatePicker } from '$lib/components/ui';
 	import { titleCase } from '$lib/format';
@@ -49,7 +50,11 @@
 
 	// Growing setup.
 	let medium = $state('');
+	let mediumRecipeId = $state('');
 	let mediumDetails = $state('');
+	// User recipes and built-in mixes are offered in one list: a built-in is a
+	// perfectly good answer to "what is this grow mixed from".
+	let mediumRecipes = $state<MediumRecipe[]>([]);
 	let nutrientMethod = $state('');
 	let potSize = $state<number | null>(null);
 	let potUnit = $state('L');
@@ -91,7 +96,30 @@
 			.catch(() => {});
 		getCultivars().then((c) => (cultivars = c)).catch(() => {});
 		getEnvironments().then((e) => (environments = e)).catch(() => {});
+		Promise.all([getMediumRecipes(), getMediumRecipeTemplates()])
+			.then(([mine, builtin]) => (mediumRecipes = [...mine, ...builtin]))
+			.catch(() => {});
 	});
+
+	// Medium recipes offered for the grow: crop-tagged ones for other species are
+	// dropped, untagged ones always apply.
+	const mediumRecipeItems = $derived([
+		{ value: '', label: '— No recipe —' },
+		...mediumRecipes
+			.filter((r) => !r.species || r.species === species)
+			.map((r) => ({
+				value: r.id,
+				label: r.source === 'builtin' ? `${r.name} (built-in)` : r.name
+			}))
+	]);
+	const selectedMediumRecipe = $derived(mediumRecipes.find((r) => r.id === mediumRecipeId));
+
+	/** "70% coco coir · 30% perlite" — the mix at a glance. */
+	function mediumSummary(r: MediumRecipe): string {
+		return (r.components ?? [])
+			.map((c) => `${c.percent}% ${c.label.toLowerCase()}`)
+			.join(' · ');
+	}
 
 	// Species picker tiles: the rich catalog when loaded, else the preset ids so
 	// the picker still works before (or without) the catalog.
@@ -112,6 +140,7 @@
 		notes = grow?.notes ?? '';
 		const s = grow?.setup;
 		medium = s?.medium ?? '';
+		mediumRecipeId = s?.mediumRecipeId ?? '';
 		mediumDetails = s?.mediumDetails ?? '';
 		nutrientMethod = s?.nutrientMethod ?? '';
 		potSize = s?.potSize ?? null;
@@ -262,6 +291,7 @@
 				stages: orderedStages,
 				setup: {
 					medium,
+					mediumRecipeId,
 					mediumDetails: mediumDetails.trim(),
 					nutrientMethod,
 					potSize: potSize && potSize > 0 ? potSize : 0,
@@ -416,6 +446,23 @@
 					<Select class="mt-1" bind:value={nutrientMethod} placeholder="—" items={asItems(nutrientOptions)} />
 				</label>
 			</div>
+			<label class="block">
+				<span class="text-xs text-rig-400">Medium recipe <span class="text-rig-600">(optional)</span></span>
+				<Select
+					class="mt-1"
+					bind:value={mediumRecipeId}
+					placeholder="— No recipe —"
+					items={mediumRecipeItems}
+				/>
+				<span class="mt-1 block text-[11px] text-rig-500">
+					{#if selectedMediumRecipe}
+						{mediumSummary(selectedMediumRecipe)} · the default for this grow's plants, which
+						each plant can override.
+					{:else}
+						What the substrate is mixed from. Manage recipes in the Library.
+					{/if}
+				</span>
+			</label>
 			<label class="block">
 				<span class="text-xs text-rig-400">Medium details <span class="text-rig-600">(optional)</span></span>
 				<input bind:value={mediumDetails} placeholder="e.g. BioBizz Light-Mix + worm castings + perlite" class="{field} mt-1" />

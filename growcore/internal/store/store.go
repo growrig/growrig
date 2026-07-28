@@ -24,6 +24,7 @@ type Store struct {
 	db         *sql.DB
 	configDir  string
 	feedingDir string
+	mediumDir  string
 	syncing    bool
 }
 
@@ -39,6 +40,7 @@ func Open(path string) (*Store, error) {
 		db:         db,
 		configDir:  filepath.Join(filepath.Dir(path), "environments"),
 		feedingDir: filepath.Join(filepath.Dir(path), "feedings"),
+		mediumDir:  filepath.Join(filepath.Dir(path), "mediums"),
 	}
 	if err := s.migrate(); err != nil {
 		db.Close()
@@ -128,6 +130,7 @@ CREATE TABLE IF NOT EXISTS plant_units (
     label      TEXT NOT NULL DEFAULT '',
     slug       TEXT NOT NULL DEFAULT '', -- URL-friendly form of label, derived on save
     cultivar   TEXT NOT NULL DEFAULT '',
+    medium_recipe_id TEXT NOT NULL DEFAULT '', -- overrides the grow's; '' inherits
     tracking   TEXT NOT NULL DEFAULT 'group',
     quantity   INTEGER NOT NULL DEFAULT 1,
     status     TEXT NOT NULL DEFAULT 'active',
@@ -309,6 +312,7 @@ CREATE TABLE IF NOT EXISTS care_events (
     ec          REAL NOT NULL DEFAULT 0,
     runoff_ml   REAL NOT NULL DEFAULT 0,
     runoff_ph   REAL NOT NULL DEFAULT 0,
+    doses       TEXT NOT NULL DEFAULT '',   -- JSON product key → amount per plant
     created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_care_grow_ts ON care_events (grow_id, occurred_at DESC);
@@ -524,6 +528,8 @@ DROP TABLE IF EXISTS devices;
 		{"ai_chats", "environment_id", "TEXT NOT NULL DEFAULT ''"},
 		{"grows", "slug", "TEXT NOT NULL DEFAULT ''"},
 		{"plant_units", "slug", "TEXT NOT NULL DEFAULT ''"},
+		{"care_events", "doses", "TEXT NOT NULL DEFAULT ''"},
+		{"plant_units", "medium_recipe_id", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureColumn(m.table, m.column, m.def); err != nil {
 			return err
@@ -962,13 +968,14 @@ func (s *Store) SavePlantUnit(u domain.PlantUnit) error {
 	}
 	u.Slug = domain.Slugify(u.Label) // always derived from the current label
 	_, err := s.db.Exec(
-		`INSERT INTO plant_units (id, grow_id, label, slug, cultivar, tracking, quantity, status, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO plant_units (id, grow_id, label, slug, cultivar, medium_recipe_id, tracking, quantity, status, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   grow_id=excluded.grow_id, label=excluded.label, slug=excluded.slug, cultivar=excluded.cultivar,
+		   medium_recipe_id=excluded.medium_recipe_id,
 		   tracking=excluded.tracking, quantity=excluded.quantity, status=excluded.status,
 		   created_at=excluded.created_at`,
-		u.ID, u.GrowID, u.Label, u.Slug, u.Cultivar, string(u.Tracking), u.Quantity, string(u.Status), u.CreatedAt.UnixMilli(),
+		u.ID, u.GrowID, u.Label, u.Slug, u.Cultivar, u.MediumRecipeID, string(u.Tracking), u.Quantity, string(u.Status), u.CreatedAt.UnixMilli(),
 	)
 	return err
 }
@@ -977,7 +984,7 @@ func scanPlantUnit(scan func(dst ...any) error) (domain.PlantUnit, error) {
 	var u domain.PlantUnit
 	var tracking, status string
 	var created int64
-	if err := scan(&u.ID, &u.GrowID, &u.Label, &u.Slug, &u.Cultivar, &tracking, &u.Quantity, &status, &created); err != nil {
+	if err := scan(&u.ID, &u.GrowID, &u.Label, &u.Slug, &u.Cultivar, &u.MediumRecipeID, &tracking, &u.Quantity, &status, &created); err != nil {
 		return domain.PlantUnit{}, err
 	}
 	u.Tracking = domain.TrackingMode(tracking)
@@ -986,7 +993,7 @@ func scanPlantUnit(scan func(dst ...any) error) (domain.PlantUnit, error) {
 	return u, nil
 }
 
-const unitCols = `id, grow_id, label, slug, cultivar, tracking, quantity, status, created_at`
+const unitCols = `id, grow_id, label, slug, cultivar, medium_recipe_id, tracking, quantity, status, created_at`
 
 // PlantUnits returns the units belonging to a grow, oldest first.
 func (s *Store) PlantUnits(growID string) ([]domain.PlantUnit, error) {
@@ -1120,7 +1127,7 @@ func (s *Store) CurrentPlacements() ([]domain.PlantPlacement, error) {
 // environment (units with an open placement there).
 func (s *Store) PlantsInEnvironment(envID string) ([]domain.PlantUnit, error) {
 	rows, err := s.db.Query(
-		`SELECT u.id, u.grow_id, u.label, u.slug, u.cultivar, u.tracking, u.quantity, u.status, u.created_at
+		`SELECT u.id, u.grow_id, u.label, u.slug, u.cultivar, u.medium_recipe_id, u.tracking, u.quantity, u.status, u.created_at
 		 FROM plant_units u
 		 JOIN plant_placements p ON p.plant_unit_id=u.id
 		 WHERE p.environment_id=? AND p.ended_at IS NULL

@@ -46,14 +46,23 @@ properties:
                 type: string
               unit:
                 type: string
+              basis:
+                description: >-
+                  What a dose is measured against. Omitted means per litre of
+                  nutrient solution. Dry amendments are dosed per plant, per pot,
+                  or per litre of substrate.
+                enum: [plant, pot, substrate]
         phases:
-          description: Ordered named spans, each with per-week doses keyed by product key.
+          description: >-
+            Ordered named spans. A phase is either weekly (per-week doses) or
+            event-triggered (a single application at planting, transplant or
+            top-dress), never both.
           type: array
           minItems: 1
           items:
             type: object
             additionalProperties: false
-            required: [name, weeks]
+            required: [name]
             properties:
               name:
                 type: string
@@ -61,6 +70,19 @@ properties:
               stage:
                 description: Optional link to one of the species' cultivation stages.
                 type: string
+              trigger:
+                description: >-
+                  Event this phase is applied at. Omit for an ordinary weekly
+                  phase. A triggered phase has no position on the week timeline.
+                enum: [planting, transplant, topdress]
+              doses:
+                description: >-
+                  One-shot doses for a triggered phase: product key → amount in
+                  the product's (or preset's) unit.
+                type: object
+                additionalProperties:
+                  type: number
+                  minimum: 0
               weeks:
                 type: array
                 items:
@@ -73,3 +95,15 @@ properties:
                       additionalProperties:
                         type: number
                         minimum: 0
+            allOf:
+              # Weekly phases need weeks; triggered ones need doses instead.
+              - if:
+                  not: { required: [trigger] }
+                then:
+                  required: [weeks]
+              - if:
+                  required: [trigger]
+                then:
+                  required: [doses]
+                  properties:
+                    weeks: { maxItems: 0 }

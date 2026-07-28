@@ -76,7 +76,7 @@
 				{:else}
 					<Tent size={15} class="shrink-0 text-rig-400" />
 				{/if}
-				<span class="truncate font-medium text-rig-100 hover:text-leaf">{env.name}</span>
+				<span class="truncate font-medium text-rig-100 hover:underline">{env.name}</span>
 			</a>
 		</td>
 		<td class="px-3">

@@ -452,7 +452,7 @@
 		{/if}
 
 		{#if product.documentation}
-			<a href={product.documentation} target="_blank" rel="noreferrer" class="inline-flex items-center gap-1 text-sm text-rig-400 hover:text-leaf">Home Assistant integration instructions <ExternalLink size={14} /></a>
+			<a href={product.documentation} target="_blank" rel="noreferrer" class="inline-flex items-center gap-1 text-sm text-rig-400 hover:underline">Home Assistant integration instructions <ExternalLink size={14} /></a>
 		{/if}
 		{#if error}<p class="text-sm text-danger">{error}</p>{/if}
 		<div class="flex justify-end"><Button onclick={install} disabled={!ready || busy}>{busy ? 'Installing…' : 'Install device'}</Button></div>

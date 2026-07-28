@@ -1,0 +1,55 @@
+# Built-in growing-medium recipes: what a substrate is mixed from.
+#
+# `components` are bulk ingredients as a share of total volume and should add up
+# to 100. `amendments` are dosed against the finished mix instead (5 g per litre
+# of mix), so they sit outside that total.
+#
+# Recipes are global — a coco/perlite mix serves any crop — so `species:` is an
+# optional tag, not a filter that hides a recipe.
+#
+# These are deliberately plain, widely-used starting points. They are read-only
+# in the app; duplicate one to build your own.
+recipes:
+  - id: coco-perlite-70-30
+    name: Coco / perlite 70-30
+    base: coco
+    description: >-
+      The standard coco blend: enough perlite to keep the mix airy and
+      free-draining without drying out between waterings. Buffer the coco before
+      use, and feed from the first watering — coco holds no nutrition of its own.
+    components:
+      - { label: Coco coir, percent: 70 }
+      - { label: Perlite, percent: 30 }
+
+  - id: coco-perlite-60-40
+    name: Coco / perlite 60-40
+    base: coco
+    description: >-
+      A more open version of the standard blend, for frequent or automated
+      watering where the extra drainage prevents the root zone staying wet.
+    components:
+      - { label: Coco coir, percent: 60 }
+      - { label: Perlite, percent: 40 }
+
+  - id: potting-soil-perlite-80-20
+    name: Potting soil / perlite 80-20
+    base: soil
+    description: >-
+      A pre-fertilised peat-based potting soil opened up with perlite. The soil
+      carries its own charge, so the first weeks usually need water only.
+    components:
+      - { label: Potting soil, percent: 80 }
+      - { label: Perlite, percent: 20 }
+
+  - id: living-soil-base
+    name: Living soil base
+    base: soil
+    description: >-
+      A re-usable organic base built to be fed by soil life rather than by the
+      bottle: a peat or coco backbone, aeration, and compost as the biology.
+      Amendment rates vary widely by source — treat these as the frame and set
+      your own amounts before mixing a batch.
+    components:
+      - { label: Peat or coco base, percent: 40 }
+      - { label: Aeration (perlite / pumice / rice hulls), percent: 30 }
+      - { label: Compost or worm castings, percent: 30 }

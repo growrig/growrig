@@ -110,14 +110,16 @@
 		{ label: '', items: [{ href: '/', label: 'Home' }] },
 		{
 			label: 'Environments',
-			items: [{ href: '/env', label: 'All environments' }]
+			items: [
+				{ href: '/env', label: 'All environments' },
+				{ href: '/equipment', label: 'All Equipment' }
+			]
 		},
 		{
 			label: 'Growing',
 			items: [
 				{ href: '/grows', label: 'Grows' },
-				{ href: '/calendar', label: 'Calendar' },
-				{ href: '/activity', label: 'Activity' }
+				{ href: '/calendar', label: 'Calendar' }
 			]
 		},
 		{
@@ -126,7 +128,8 @@
 				{ href: '/inventory', label: 'Inventory' },
 				{ href: '/library', label: 'Library' }
 			]
-		}
+		},
+		{ label: '', items: [{ href: '/log', label: 'Log' }] }
 	]);
 
 	const statusMeta = {

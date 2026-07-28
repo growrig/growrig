@@ -37,7 +37,7 @@ import (
 // Kinds are the content directories a catalog manifest may provide. Devices
 // and integrations are merged into the running catalogs today; the remaining
 // kinds are accepted (and fetched) so manifests stay forward-compatible.
-var Kinds = []string{"devices", "integrations", "species", "inventory", "vendors"}
+var Kinds = []string{"devices", "integrations", "species", "inventory", "vendors", "mediums"}
 
 // MergedKinds are the kinds growcore currently merges from custom sources.
 var MergedKinds = []string{"devices", "integrations"}

@@ -1,0 +1,84 @@
+# JSON Schema (2020-12) for built-in growing-medium recipes: mediums/mediums.yaml.
+# A recipe is a substrate composition — bulk ingredients as a share of volume,
+# plus amendments dosed per litre of finished mix.
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://growrig.dev/schema/catalog/mediums.json
+title: GrowRig medium recipes
+description: Built-in growing-medium compositions shipped with a catalog.
+type: object
+additionalProperties: false
+required: [recipes]
+properties:
+  recipes:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      required: [id, name, components]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]*$'
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        species:
+          description: >-
+            Optional crop tag. Recipes are global; this only sorts and filters
+            the list, it does not hide a recipe from other species.
+          type: string
+        base:
+          description: Coarse medium category this mix produces.
+          type: string
+        components:
+          description: Bulk ingredients as a share of total volume; should total 100.
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [label, percent]
+            properties:
+              productId:
+                description: >-
+                  Catalog product this ingredient is, as "<category>/<id>" (e.g.
+                  "consumables/biobizz-light-mix"). Omitted for loose materials
+                  with no catalog entry. The product carries the brand, which is
+                  why a recipe has none of its own.
+                type: string
+              label:
+                type: string
+                minLength: 1
+              percent:
+                type: number
+                exclusiveMinimum: 0
+                maximum: 100
+              note:
+                type: string
+        amendments:
+          description: >-
+            Ingredients dosed against the finished volume (e.g. 5 g per litre of
+            mix) rather than taking a share of it.
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [label, amount]
+            properties:
+              productId:
+                description: Catalog product this amendment is, as "<category>/<id>".
+                type: string
+              label:
+                type: string
+                minLength: 1
+              amount:
+                type: number
+                exclusiveMinimum: 0
+              unit:
+                description: Unit of `amount` per litre of mix — "g" means g/L.
+                type: string
+              note:
+                type: string

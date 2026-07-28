@@ -91,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/roles", s.requireAuth(s.getRoles))
 	mux.HandleFunc("GET /api/stage-presets", s.requireAuth(s.getStagePresets))
 	mux.HandleFunc("GET /api/activity", s.requireAuth(s.getActivity))
+	mux.HandleFunc("GET /api/history", s.requireAuth(s.getCollectionHistory))
 	mux.HandleFunc("GET /api/attention", s.requireAuth(s.getAttention))
 	mux.HandleFunc("GET /api/alerts", s.requireAuth(s.getAlerts))
 	mux.HandleFunc("POST /api/alerts/{id}/ack", s.requireAuth(s.ackAlert))
@@ -133,6 +134,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/recipes", s.requireAuth(s.getRecipes))
 	// Built-in recipe templates, offered only to seed a new user recipe.
 	mux.HandleFunc("GET /api/recipe-templates", s.requireAuth(s.getRecipeTemplates))
+	mux.HandleFunc("GET /api/medium-recipes", s.requireAuth(s.getMediumRecipes))
+	mux.HandleFunc("GET /api/medium-recipe-templates", s.requireAuth(s.getMediumTemplates))
+	mux.HandleFunc("GET /api/medium-recipes/{id}", s.requireAuth(s.getMediumRecipe))
 	mux.HandleFunc("GET /api/recipes/{id}", s.requireAuth(s.getRecipe))
 
 	// Per-environment read.
@@ -184,6 +188,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/recipes", s.requireAdmin(s.createRecipe))
 	mux.HandleFunc("PUT /api/recipes/{id}", s.requireAdmin(s.updateRecipe))
 	mux.HandleFunc("DELETE /api/recipes/{id}", s.requireAdmin(s.deleteRecipe))
+	mux.HandleFunc("POST /api/medium-recipes", s.requireAdmin(s.createMediumRecipe))
+	mux.HandleFunc("PUT /api/medium-recipes/{id}", s.requireAdmin(s.updateMediumRecipe))
+	mux.HandleFunc("DELETE /api/medium-recipes/{id}", s.requireAdmin(s.deleteMediumRecipe))
 
 	// Admin only (configuration & user management).
 	mux.HandleFunc("GET /api/catalog", s.requireAdmin(s.getCatalog))

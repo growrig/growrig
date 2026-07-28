@@ -51,6 +51,11 @@ export interface Grow {
 export interface GrowingSetup {
 	/** soil | coco | soilless | hydroponic | aeroponic */
 	medium?: string;
+	/**
+	 * The MediumRecipe this grow's substrate is mixed from. It is the default
+	 * for the grow's plants: a plant with its own `mediumRecipeId` overrides it.
+	 */
+	mediumRecipeId?: string;
 	/** Free text: commercial product or composition. */
 	mediumDetails?: string;
 	/** organic | mineral | living-soil */
@@ -69,6 +74,8 @@ export interface PlantUnit {
 	slug: string;
 	/** Cultivar is per-unit, so one grow can mix cultivars. */
 	cultivar: string;
+	/** Overrides the grow's medium recipe; empty means inherit it. */
+	mediumRecipeId?: string;
 	tracking: TrackingMode;
 	quantity: number;
 	status: PlantStatus;
@@ -196,6 +203,10 @@ export interface CareEvent {
 	ec?: number;
 	runoffMl?: number;
 	runoffPh?: number;
+	/** Per-plant amendment doses, keyed by FeedingProduct.key. */
+	doses?: Record<string, number>;
+	/** `doses` rendered for display, e.g. "2 tabs · 1 g Mycotrex". */
+	dosesLabel?: string;
 	createdAt: string;
 	applications: CareApplication[];
 }
@@ -235,6 +246,8 @@ export interface LogCareInput {
 	ec?: number;
 	runoffMl?: number;
 	runoffPh?: number;
+	/** Per-plant amendment doses, keyed by FeedingProduct.key. */
+	doses?: Record<string, number>;
 	amountMl?: number;
 	plantUnitIds?: string[];
 	applications?: CareApplicationInput[];
@@ -437,7 +450,8 @@ export type CareField =
 	| 'photos'
 	| 'potSize'
 	| 'product'
-	| 'trainType';
+	| 'trainType'
+	| 'doses';
 
 /** One manual action a grower can log against a grow's plants (species-driven). */
 export interface CareAction {
@@ -573,10 +587,18 @@ export interface InventoryItem {
 // --- Feeding recipes (nutrient schedules; GET /api/recipes) ---
 
 /** One nutrient line in a schedule. `unit` overrides the recipe default. */
+/**
+ * What a dose is measured against. Absent means per litre of nutrient solution
+ * — the common case. Dry amendments (tablets, mycorrhiza powder) are dosed per
+ * plant, per pot, or per litre of substrate instead.
+ */
+export type DoseBasis = 'plant' | 'pot' | 'substrate';
+
 export interface FeedingProduct {
 	key: string;
 	label: string;
 	unit?: string;
+	basis?: DoseBasis;
 }
 
 /** One week of dosing: product key -> amount in that product's unit. */
@@ -584,10 +606,22 @@ export interface FeedingWeek {
 	doses: Record<string, number>;
 }
 
-/** A named span of the schedule; `stage` optionally links it to a species stage. */
+/** The event a one-shot phase is applied at, instead of running week by week. */
+export type PhaseTrigger = 'planting' | 'transplant' | 'topdress';
+
+/**
+ * A named span of the schedule; `stage` optionally links it to a species stage.
+ *
+ * A phase is either weekly (`weeks`) or event-triggered (`trigger` + `doses`),
+ * never both. A triggered phase is a single application — a soil amendment
+ * buried at planting, say — with no position on the week timeline.
+ */
 export interface FeedingPhase {
 	name: string;
 	stage?: string;
+	trigger?: PhaseTrigger;
+	/** One-shot doses for a triggered phase, keyed like a week's doses. */
+	doses?: Record<string, number>;
 	weeks: FeedingWeek[];
 }
 
@@ -608,6 +642,93 @@ export interface FeedingRecipe {
 	products: FeedingProduct[];
 	phases: FeedingPhase[];
 	createdAt: string;
+}
+
+/**
+ * A growing-medium composition: what a substrate is mixed from.
+ *
+ * `components` are bulk ingredients as a share of total volume and should total
+ * 100; `amendments` are dosed against the finished mix (5 g per litre) and sit
+ * outside that total. Built-in recipes (`source: 'builtin'`) are read-only;
+ * user recipes (`source: 'user'`) are created in-app.
+ */
+export interface MediumRecipe {
+	id: string;
+	name: string;
+	description?: string;
+	source: 'builtin' | 'user';
+	/** Optional crop tag; recipes are global, so empty means "any crop". */
+	species?: string;
+	/** Coarse medium category this mix produces (soil, coco, …). */
+	base?: string;
+	components: MediumComponent[];
+	amendments?: MediumAmendment[];
+	createdAt: string;
+}
+
+/**
+ * One bulk ingredient as a share of total mix volume.
+ *
+ * Normally a catalog product (`productId`, e.g. "consumables/biobizz-light-mix")
+ * — the product carries the brand, image and description, which is why a recipe
+ * has no brand of its own. Loose materials with no catalog entry (perlite, a
+ * local compost) are recorded by `label` alone. `label` is always set: for a
+ * product it snapshots the name so the recipe still reads if the catalog moves.
+ */
+export interface MediumComponent {
+	productId?: string;
+	label: string;
+	percent: number;
+	note?: string;
+}
+
+/** An ingredient dosed per litre of finished mix rather than taking a share. */
+export interface MediumAmendment {
+	productId?: string;
+	label: string;
+	amount: number;
+	/** Unit of `amount` per litre of mix — "g" means g/L. */
+	unit?: string;
+	note?: string;
+}
+
+// --- History: a collection's merged, chronological story (GET /api/history) ---
+
+export type HistoryKind = 'care' | 'photo' | 'milestone' | 'placement' | 'pot' | 'system';
+
+/** A thing an entry points at, resolved to a label so it can render as a link. */
+export interface HistoryRef {
+	kind: 'plant' | 'grow' | 'environment' | 'device';
+	id: string;
+	label: string;
+}
+
+/**
+ * One thing that happened, at one moment.
+ *
+ * Entries carry structured records, never rendered sentences — the wording is
+ * built client-side (see history.ts), which is what keeps the targets inside a
+ * line linkable. Exactly one payload is set, matching `kind`.
+ */
+export interface HistoryEntry {
+	id: string;
+	kind: HistoryKind;
+	at: string;
+	/** Routine control-loop chatter; hidden until asked for. */
+	automation?: boolean;
+	refs?: HistoryRef[];
+	care?: CareEvent;
+	photo?: GrowPhoto;
+	stage?: string;
+	placement?: PlantPlacement;
+	pot?: PlantPot;
+	activity?: Activity;
+}
+
+/** One page of history plus the total available in that scope. */
+export interface HistoryPage {
+	items: HistoryEntry[];
+	total: number;
 }
 
 export type LightScheduleMode = 'off' | 'phase' | 'custom';

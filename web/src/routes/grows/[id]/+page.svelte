@@ -26,12 +26,10 @@
 		getCareConfig,
 		getGrowPhotos,
 		getGrowAnalytics,
-		getActivity,
 		getAlerts,
 		getTasks
 	} from '$lib/api';
 	import type {
-		Activity,
 		Alert,
 		Cultivar,
 		CareActionDef,
@@ -59,7 +57,7 @@
 	import PlantsTab from '$lib/components/grow/PlantsTab.svelte';
 	import PlanTab from '$lib/components/grow/PlanTab.svelte';
 	import AnalyticsTab from '$lib/components/grow/AnalyticsTab.svelte';
-	import TimelineTab from '$lib/components/grow/TimelineTab.svelte';
+	import HistoryTab from '$lib/components/grow/HistoryTab.svelte';
 	import GrowSettingsTab from '$lib/components/grow/SettingsTab.svelte';
 	import Sprout from '@lucide/svelte/icons/sprout';
 	import ArrowRightLeft from '@lucide/svelte/icons/arrow-right-left';
@@ -88,7 +86,6 @@
 	let photos = $state<GrowPhoto[]>([]);
 	let analytics = $state<GrowAnalytics | null>(null);
 	let stageEvents = $state<StageEvent[]>([]);
-	let activity = $state<Activity[]>([]);
 	let alerts = $state<Alert[]>([]);
 	let tasks = $state<Task[]>([]);
 
@@ -99,17 +96,21 @@
 	const growAlerts = $derived(alerts.filter((a) => a.growId === id));
 
 	// --- tabs ---
-	type Tab = 'overview' | 'plants' | 'plan' | 'analytics' | 'timeline' | 'settings';
+	type Tab = 'overview' | 'plants' | 'plan' | 'analytics' | 'history' | 'settings';
 	const tabs: { id: Tab; label: string }[] = [
 		{ id: 'overview', label: 'Overview' },
 		{ id: 'plants', label: 'Plants' },
 		{ id: 'plan', label: 'Plan' },
 		{ id: 'analytics', label: 'Analytics' },
-		{ id: 'timeline', label: 'Timeline' },
+		{ id: 'history', label: 'History' },
 		{ id: 'settings', label: 'Settings' }
 	];
 	const activeTab = $derived.by<Tab>(() => {
-		const t = page.url.searchParams.get('tab') as Tab | null;
+		const raw = page.url.searchParams.get('tab');
+		// The tab was called "timeline" before it became History; keep old links
+		// and bookmarks working.
+		if (raw === 'timeline') return 'history';
+		const t = raw as Tab | null;
 		return t && tabs.some((x) => x.id === t) ? t : 'overview';
 	});
 	function setTab(t: Tab) {
@@ -145,9 +146,6 @@
 	function reloadStageEvents() {
 		if (id) getStageEvents(id).then((e) => (stageEvents = e)).catch(() => {});
 	}
-	function reloadActivity() {
-		if (id) getActivity({ growId: id, limit: 100 }).then((p) => (activity = p.items)).catch(() => {});
-	}
 	function reloadAttention() {
 		getAlerts().then((a) => (alerts = a)).catch(() => {});
 		getTasks('open').then((t) => (tasks = t)).catch(() => {});
@@ -175,7 +173,6 @@
 		reloadPhotos();
 		reloadAnalytics();
 		reloadStageEvents();
-		reloadActivity();
 		reloadAttention();
 		getEnvironments().then((e) => (environments = e)).catch(() => {});
 		getStagePresets().then((p) => (presets = p)).catch(() => {});
@@ -189,11 +186,10 @@
 		careOpen = true;
 	}
 	async function onCareLogged() {
-		await Promise.all([reload(), reloadCare(), reloadActivity(), reloadAnalytics()]);
+		await Promise.all([reload(), reloadCare(), reloadAnalytics()]);
 	}
 	function onPhotoUploaded() {
 		reloadPhotos();
-		reloadActivity();
 	}
 
 	// --- stage / lifecycle ---
@@ -215,7 +211,7 @@
 			await changeStage(grow.id, stage);
 			stageConfirmOpen = false;
 			toast.success('Stage updated', { description: `${grow.name} · now in ${stage}` });
-			await Promise.all([reload(), reloadAnalytics(), reloadStageEvents(), reloadActivity()]);
+			await Promise.all([reload(), reloadAnalytics(), reloadStageEvents()]);
 		} catch (e) {
 			err = errMsg(e, 'Failed');
 		} finally {
@@ -502,8 +498,8 @@
 			<PlanTab {grow} {isAdmin} {analytics} {careDefs} onAdvance={advanceStage} onEditStages={() => (stageDatesOpen = true)} onCareSettings={() => (careSettingsOpen = true)} />
 		{:else if activeTab === 'analytics'}
 			<AnalyticsTab {grow} {analytics} {photos} />
-		{:else if activeTab === 'timeline'}
-			<TimelineTab {grow} {care} {photos} {activity} {analytics} />
+		{:else if activeTab === 'history'}
+			<HistoryTab {grow} />
 		{:else if activeTab === 'settings'}
 			<GrowSettingsTab
 				{grow}

@@ -7,8 +7,8 @@
 	import { auth } from '$lib/auth.svelte';
 	import { getPlant, getGrow, getEnvironments, movePlant, repotPlant, updatePlant, harvestPlant, removePlant, getCultivars, cultivarImageURL } from '$lib/api';
 	import type { Environment, PlantView, PlantDetail, PlantPot, Cultivar, TrackingMode, PotUnit } from '$lib/types';
+	import HistoryPanel from '$lib/components/HistoryPanel.svelte';
 	import { titleCase, daysSince, defaultPlantLabel, plantDisplayName, plantNumbersById } from '$lib/format';
-	import { fmtDate } from '$lib/datetime';
 	import { Button, Dialog, Select, Breadcrumb } from '$lib/components/ui';
 	import MapPin from '@lucide/svelte/icons/map-pin';
 	import Pencil from '@lucide/svelte/icons/pencil';
@@ -76,6 +76,7 @@
 	});
 
 	const envItems = $derived(environments.map((e) => ({ value: e.id, label: e.name })));
+
 
 	async function move(envId: string) {
 		if (!plant || !envId || envId === plant.currentEnvironmentId) return;
@@ -292,51 +293,11 @@
 				</div>
 			</section>
 		{:else if activeTab === 'history'}
-			<div class="grid gap-6 sm:grid-cols-2">
-				<section>
-					<h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-rig-400">Placement history</h2>
-					{#if plant.placements.length === 0}
-						<p class="text-sm text-rig-500">No placements recorded.</p>
-					{:else}
-						<ol class="space-y-2">
-							{#each plant.placements as p (p.id)}
-								<li class="flex items-center justify-between rounded-lg border border-rig-800 bg-rig-950/40 px-4 py-2 text-sm">
-									{#if p.environmentId}
-										<a href="/env/{p.environmentId}" class="font-medium hover:text-rig-50 hover:underline">
-											{p.environmentName || p.environmentId}
-										</a>
-									{:else}
-										<span class="font-medium">{p.environmentName || '—'}</span>
-									{/if}
-									<span class="text-rig-400">
-										{fmtDate(p.startedAt)} →
-										{#if p.endedAt}{fmtDate(p.endedAt)}{:else}<span class="text-rig-200">current</span>{/if}
-									</span>
-								</li>
-							{/each}
-						</ol>
-					{/if}
-				</section>
-
-				<section>
-					<h2 class="mb-3 text-sm font-semibold uppercase tracking-wide text-rig-400">Pot history</h2>
-					{#if plant.pots.length === 0}
-						<p class="text-sm text-rig-500">No pots recorded.</p>
-					{:else}
-						<ol class="space-y-2">
-							{#each plant.pots as p (p.id)}
-								<li class="flex items-center justify-between rounded-lg border border-rig-800 bg-rig-950/40 px-4 py-2 text-sm">
-									<span class="font-medium">{potLabel(p)}</span>
-									<span class="text-rig-400">
-										{fmtDate(p.startedAt)} →
-										{#if p.endedAt}{fmtDate(p.endedAt)}{:else}<span class="text-rig-200">current</span>{/if}
-									</span>
-								</li>
-							{/each}
-						</ol>
-					{/if}
-				</section>
-			</div>
+			<HistoryPanel
+				plantId={plant.id}
+				photoGrowId={plant.growId}
+				empty="Nothing recorded for this plant yet."
+			/>
 		{:else if activeTab === 'settings'}
 			{#if !isAdmin}
 				<p class="text-rig-400">You don't have permission to change this plant.</p>

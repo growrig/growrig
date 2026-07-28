@@ -78,26 +78,49 @@ func sanitizeRecipe(b recipeBody) (products []domain.FeedingProduct, phases []do
 			continue
 		}
 		valid[key] = true
+		basis := domain.DoseBasis(strings.TrimSpace(string(p.Basis)))
+		if !domain.ValidBasis(basis) {
+			basis = domain.BasisSolution
+		}
 		products = append(products, domain.FeedingProduct{
 			Key:   key,
 			Label: label,
 			Unit:  strings.TrimSpace(p.Unit),
+			Basis: basis,
 		})
+	}
+	// Keep only doses naming a surviving product with a positive amount.
+	clean := func(in map[string]float64) map[string]float64 {
+		out := map[string]float64{}
+		for k, v := range in {
+			if valid[k] && v > 0 {
+				out[k] = v
+			}
+		}
+		return out
 	}
 	for _, ph := range b.Phases {
 		name := strings.TrimSpace(ph.Name)
 		if name == "" {
 			continue
 		}
-		phase := domain.FeedingPhase{Name: name, Stage: strings.TrimSpace(ph.Stage)}
-		for _, wk := range ph.Weeks {
-			doses := map[string]float64{}
-			for k, v := range wk.Doses {
-				if valid[k] && v > 0 {
-					doses[k] = v
-				}
+		trigger := domain.PhaseTrigger(strings.TrimSpace(string(ph.Trigger)))
+		if !domain.ValidTrigger(trigger) {
+			trigger = domain.TriggerWeekly
+		}
+		phase := domain.FeedingPhase{
+			Name:    name,
+			Stage:   strings.TrimSpace(ph.Stage),
+			Trigger: trigger,
+		}
+		// A phase is weekly or one-shot, never both: drop whichever half does
+		// not belong so a phase switched in the editor leaves nothing behind.
+		if phase.OneShot() {
+			phase.Doses = clean(ph.Doses)
+		} else {
+			for _, wk := range ph.Weeks {
+				phase.Weeks = append(phase.Weeks, domain.FeedingWeek{Doses: clean(wk.Doses)})
 			}
-			phase.Weeks = append(phase.Weeks, domain.FeedingWeek{Doses: doses})
 		}
 		phases = append(phases, phase)
 	}

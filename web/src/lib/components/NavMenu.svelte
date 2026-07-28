@@ -8,7 +8,6 @@
 	import type { Location } from '$lib/types';
 	import Sprout from '@lucide/svelte/icons/sprout';
 	import CalendarDays from '@lucide/svelte/icons/calendar-days';
-	import Activity from '@lucide/svelte/icons/activity';
 	import Boxes from '@lucide/svelte/icons/boxes';
 	import BookOpen from '@lucide/svelte/icons/book-open';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -16,6 +15,7 @@
 	import Tent from '@lucide/svelte/icons/tent';
 	import Wind from '@lucide/svelte/icons/wind';
 	import LayoutList from '@lucide/svelte/icons/layout-list';
+	import Cpu from '@lucide/svelte/icons/cpu';
 
 	let locations = $state<Location[]>([]);
 	onMount(() => {
@@ -33,8 +33,7 @@
 
 	const growing = [
 		{ href: '/grows', label: 'Grows', icon: Sprout },
-		{ href: '/calendar', label: 'Calendar', icon: CalendarDays },
-		{ href: '/activity', label: 'Activity', icon: Activity }
+		{ href: '/calendar', label: 'Calendar', icon: CalendarDays }
 	];
 	const resources = [
 		{ href: '/inventory', label: 'Inventory', icon: Boxes },
@@ -103,7 +102,7 @@
 
 		<NavigationMenu.Item class="relative">
 			<NavigationMenu.Trigger
-				class="{triggerBase} {isActive('/env') ? activeClass : idleClass}"
+				class="{triggerBase} {isActive('/env') || isActive('/equipment') ? activeClass : idleClass}"
 			>
 				Environments
 				<ChevronDown
@@ -156,8 +155,21 @@
 						<LayoutList size={16} class="text-rig-400" />
 						All environments
 					</NavigationMenu.Link>
+					<NavigationMenu.Link href="/equipment" class={panelItem}>
+						<Cpu size={16} class="text-rig-400" />
+						All Equipment
+					</NavigationMenu.Link>
 				</div>
 			</NavigationMenu.Content>
+		</NavigationMenu.Item>
+
+		<NavigationMenu.Item>
+			<NavigationMenu.Link
+				href="/log"
+				class="{linkBase} {isActive('/log') ? activeClass : idleClass}"
+			>
+				Log
+			</NavigationMenu.Link>
 		</NavigationMenu.Item>
 	</NavigationMenu.List>
 </NavigationMenu.Root>

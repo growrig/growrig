@@ -26,11 +26,21 @@ func (s *Store) SaveCareEvent(e domain.CareEvent) error {
 		return err
 	}
 	defer tx.Rollback()
+	// Doses are a small open-ended map (product key → per-plant amount), so they
+	// ride as JSON rather than earning a table of their own. Empty stays "".
+	var doses string
+	if len(e.Doses) > 0 {
+		raw, err := json.Marshal(e.Doses)
+		if err != nil {
+			return err
+		}
+		doses = string(raw)
+	}
 	if _, err := tx.Exec(
-		`INSERT INTO care_events (id, grow_id, type, occurred_at, source, notes, recipe_id, ph, ec, runoff_ml, runoff_ph, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO care_events (id, grow_id, type, occurred_at, source, notes, recipe_id, ph, ec, runoff_ml, runoff_ph, doses, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.GrowID, e.Type, e.OccurredAt.UnixMilli(), string(e.Source), e.Notes,
-		e.RecipeID, e.PH, e.EC, e.RunoffML, e.RunoffPH, e.CreatedAt.UnixMilli(),
+		e.RecipeID, e.PH, e.EC, e.RunoffML, e.RunoffPH, doses, e.CreatedAt.UnixMilli(),
 	); err != nil {
 		return err
 	}
@@ -46,15 +56,21 @@ func (s *Store) SaveCareEvent(e domain.CareEvent) error {
 	return tx.Commit()
 }
 
-const careCols = `id, grow_id, type, occurred_at, source, notes, recipe_id, ph, ec, runoff_ml, runoff_ph, created_at`
+const careCols = `id, grow_id, type, occurred_at, source, notes, recipe_id, ph, ec, runoff_ml, runoff_ph, doses, created_at`
 
 func scanCareEvent(scan func(dst ...any) error) (domain.CareEvent, error) {
 	var e domain.CareEvent
 	var occurred, created int64
-	var source string
+	var source, doses string
 	if err := scan(&e.ID, &e.GrowID, &e.Type, &occurred, &source, &e.Notes,
-		&e.RecipeID, &e.PH, &e.EC, &e.RunoffML, &e.RunoffPH, &created); err != nil {
+		&e.RecipeID, &e.PH, &e.EC, &e.RunoffML, &e.RunoffPH, &doses, &created); err != nil {
 		return domain.CareEvent{}, err
+	}
+	if doses != "" {
+		// A malformed blob shouldn't sink the whole journal entry.
+		if err := json.Unmarshal([]byte(doses), &e.Doses); err != nil {
+			e.Doses = nil
+		}
 	}
 	e.OccurredAt = time.UnixMilli(occurred)
 	e.CreatedAt = time.UnixMilli(created)

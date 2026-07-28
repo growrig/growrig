@@ -12,6 +12,7 @@ import Shovel from '@lucide/svelte/icons/shovel';
 import SprayCan from '@lucide/svelte/icons/spray-can';
 import Waves from '@lucide/svelte/icons/waves';
 import Sprout from '@lucide/svelte/icons/sprout';
+import Layers from '@lucide/svelte/icons/layers';
 import ListPlus from '@lucide/svelte/icons/list-plus';
 
 interface CareVisual {
@@ -27,6 +28,7 @@ const VISUALS: Record<string, CareVisual> = {
 	trim: { icon: Scissors, label: 'Trim' },
 	prune: { icon: Scissors, label: 'Prune' },
 	transplant: { icon: Shovel, label: 'Transplant' },
+	amend: { icon: Layers, label: 'Amend' },
 	treat: { icon: SprayCan, label: 'Treat' },
 	flush: { icon: Waves, label: 'Flush' },
 	harvest: { icon: Sprout, label: 'Harvest' }

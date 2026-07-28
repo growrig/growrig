@@ -34,7 +34,7 @@
 	import ClimateTab from '$lib/components/env/ClimateTab.svelte';
 	import ControlTab from '$lib/components/env/ControlTab.svelte';
 	import EquipmentTab from '$lib/components/env/EquipmentTab.svelte';
-	import ActivityTab from '$lib/components/env/ActivityTab.svelte';
+	import HistoryTab from '$lib/components/env/HistoryTab.svelte';
 	import SettingsTab from '$lib/components/env/SettingsTab.svelte';
 
 	const id = $derived(page.params.id);
@@ -43,18 +43,19 @@
 	const isAdmin = $derived(auth.isAdmin);
 
 	// --- tabs (URL-addressable via ?tab=) ---
-	type Tab = 'overview' | 'climate' | 'control' | 'equipment' | 'activity' | 'settings';
+	type Tab = 'overview' | 'climate' | 'control' | 'equipment' | 'history' | 'settings';
 	const tabs: { id: Tab; label: string }[] = [
 		{ id: 'overview', label: 'Overview' },
 		{ id: 'climate', label: 'Climate' },
 		{ id: 'control', label: 'Control' },
 		{ id: 'equipment', label: 'Equipment' },
-		{ id: 'activity', label: 'Activity' },
+		{ id: 'history', label: 'History' },
 		{ id: 'settings', label: 'Settings' }
 	];
 	const activeTab = $derived.by<Tab>(() => {
 		let t = page.url.searchParams.get('tab');
 		if (t === 'camera') t = 'equipment'; // cameras live under Equipment now
+		if (t === 'activity') t = 'history'; // the Activity tab became History
 		return t && tabs.some((x) => x.id === t) ? (t as Tab) : 'overview';
 	});
 	function setTab(t: Tab) {
@@ -226,8 +227,8 @@
 			<ControlTab {env} {canWrite} {grows} defaults={lightingDefaults} />
 		{:else if activeTab === 'equipment'}
 			<EquipmentTab {env} {canWrite} {isAdmin} />
-		{:else if activeTab === 'activity'}
-			<ActivityTab environmentId={env.id} />
+		{:else if activeTab === 'history'}
+			<HistoryTab environmentId={env.id} />
 		{:else if activeTab === 'settings'}
 			<SettingsTab id={env.id} />
 		{/if}

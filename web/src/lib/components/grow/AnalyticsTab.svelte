@@ -98,7 +98,7 @@
 				<div class="space-y-2">
 					{#each analytics.placements as pl (pl.environmentId + pl.from)}
 						<div class="flex items-center justify-between rounded-lg border border-rig-800 bg-rig-950/40 px-4 py-2.5 text-sm">
-							<a href="/env/{pl.environmentId}" class="hover:text-leaf">{pl.environmentName || pl.environmentId}</a>
+							<a href="/env/{pl.environmentId}" class="hover:underline">{pl.environmentName || pl.environmentId}</a>
 							<span class="text-xs text-rig-500">{fmtDate(pl.from)} → {pl.to ? fmtDate(pl.to) : 'now'}</span>
 						</div>
 					{/each}
