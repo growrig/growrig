@@ -212,3 +212,34 @@ func DaysSince(then, now time.Time) int {
 	}
 	return d
 }
+
+// ResolveControlGrow returns the grow whose stage drives env's automation: the
+// nominated control grow, or — when none is nominated — the only active grow
+// with active plants currently placed in the environment. ok is false when no
+// grow is nominated and the occupants are ambiguous (none, or several grows).
+func ResolveControlGrow(env Environment, grows map[string]Grow, units map[string]PlantUnit, placements []PlantPlacement) (Grow, bool) {
+	if env.ControlGrowID != "" {
+		g, ok := grows[env.ControlGrowID]
+		return g, ok
+	}
+	var sole Grow
+	found := false
+	for _, p := range placements {
+		if p.EnvironmentID != env.ID || p.EndedAt != nil {
+			continue
+		}
+		u, ok := units[p.PlantUnitID]
+		if !ok || u.Status != PlantActive {
+			continue
+		}
+		g, ok := grows[u.GrowID]
+		if !ok || g.Status != GrowActive {
+			continue
+		}
+		if found && g.ID != sole.ID {
+			return Grow{}, false
+		}
+		sole, found = g, true
+	}
+	return sole, found
+}

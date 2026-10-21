@@ -65,5 +65,34 @@ func (s *Server) getCollectionHistory(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	if err := s.labelCareApplications(page.Items); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+// labelCareApplications names the plants inside care entries, so a history row
+// can say "Cheese #1" instead of a raw unit id. Units are looked up once per
+// grow: a page of history is usually one or two grows deep.
+func (s *Server) labelCareApplications(entries []domain.HistoryEntry) error {
+	byGrow := map[string]map[string]domain.PlantUnit{}
+	for _, entry := range entries {
+		if entry.Care == nil {
+			continue
+		}
+		plants, ok := byGrow[entry.Care.GrowID]
+		if !ok {
+			var err error
+			if plants, err = s.growPlants(entry.Care.GrowID); err != nil {
+				return err
+			}
+			byGrow[entry.Care.GrowID] = plants
+		}
+		for i := range entry.Care.Applications {
+			app := &entry.Care.Applications[i]
+			app.PlantLabel = resolvePlantLabel(plants, app.PlantUnitID)
+		}
+	}
+	return nil
 }

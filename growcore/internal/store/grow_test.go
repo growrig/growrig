@@ -277,3 +277,38 @@ func TestMigrateCyclesToGrows(t *testing.T) {
 	}
 	st.Close()
 }
+
+// Backdating a repot before the current pot even started must not leave a
+// negative-length span in the pot history.
+func TestRepotClampsBackdateToTheOpenPotStart(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SaveGrow(domain.Grow{ID: "g1", Name: "G", Species: "cannabis", Stage: "veg", Status: domain.GrowActive}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SavePlantUnit(domain.PlantUnit{ID: "u1", GrowID: "g1", Label: "Plant", Tracking: domain.TrackIndividual, Quantity: 1, Status: domain.PlantActive, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now().Add(-24 * time.Hour)
+	if err := st.Repot("u1", 7.6, "L", "fabric", started); err != nil {
+		t.Fatal(err)
+	}
+
+	// "I repotted three days ago" — before the pot it is replacing began.
+	if err := st.Repot("u1", 20, "L", "autopot", time.Now().Add(-72*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	pots, err := st.PotsForUnit("u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range pots {
+		if p.EndedAt != nil && p.EndedAt.Before(p.StartedAt) {
+			t.Errorf("pot %v %s spans backwards: %s – %s", p.Size, p.Unit, p.StartedAt, *p.EndedAt)
+		}
+	}
+}

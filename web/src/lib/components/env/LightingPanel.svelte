@@ -3,10 +3,12 @@
 	import { errMsg } from '$lib/errors';
 	import type { EnvironmentView, Grow, StageLightDefaults, ControlMode } from '$lib/types';
 	import { setControl, setSwitch } from '$lib/api';
-	import { nextTransition } from '$lib/photoperiod';
+	import { fmtMinutes, lightWindow, nextTransition, ratioLabel, windowLabel } from '$lib/photoperiod';
 	import { relTime, titleCase } from '$lib/format';
 	import ControlModeToggle from './ControlModeToggle.svelte';
-	import { Switch } from '$lib/components/ui';
+	import LightingModal from '$lib/components/LightingModal.svelte';
+	import { Button, Switch } from '$lib/components/ui';
+	import Pencil from '@lucide/svelte/icons/pencil';
 	import Lightbulb from '@lucide/svelte/icons/lightbulb';
 	import LightbulbOff from '@lucide/svelte/icons/lightbulb-off';
 	import Sun from '@lucide/svelte/icons/sun';
@@ -22,12 +24,16 @@
 	let { env, canWrite, grows, defaults, flash }: Props = $props();
 
 	let open = $state(false);
+	let editing = $state(false);
 
 	const lights = $derived(env.controls?.filter((c) => c.kind === 'light') ?? []);
 	const hasPrimaryLight = $derived(lights.length > 0);
 	const mode = $derived<ControlMode>(env.control.lighting.mode);
 	const stage = $derived(env.grow?.stage ?? '');
-	const controlGrowName = $derived(grows.find((g) => g.id === env.controlGrowId)?.name ?? 'None');
+	// The grow whose stage drives the schedule: the nominated one, or the only
+	// grow growing here (resolved by the engine into env.grow).
+	const controlGrowId = $derived(env.controlGrowId || env.grow?.id || '');
+	const controlGrowName = $derived(grows.find((g) => g.id === controlGrowId)?.name ?? env.grow?.name ?? 'None');
 
 	// Live countdown to the next scheduled transition.
 	let nowMs = $state(Date.now());
@@ -36,25 +42,33 @@
 		return () => clearInterval(t);
 	});
 
-	// Read-only view of the effective photoperiod (Automatic mode).
+	// The stage list shown in the Automatic view.
 	const scheduleStages = $derived.by(() => {
-		const g = grows.find((gr) => gr.id === env.controlGrowId);
+		const g = grows.find((gr) => gr.id === controlGrowId);
 		return g?.stages?.length ? g.stages : Object.keys(defaults);
 	});
-	const effectiveHours = $derived.by(() => {
-		if (!env.schedule || env.schedule.mode === 'off') return null;
-		if (env.schedule.mode === 'custom') return env.schedule.onHours;
-		return env.schedule.stageOnHours?.[stage] ?? defaults[stage] ?? 18;
-	});
 	const stageHours = (st: string) => env.schedule?.stageOnHours?.[st] ?? defaults[st] ?? 18;
+	// The wall-clock window a given photoperiod lands on under this schedule's
+	// anchor, e.g. 12/12 centred on 15:00 → "09:00–21:00".
+	const stageWindow = (st: string) => {
+		const h = stageHours(st);
+		if (h <= 0) return 'dark all day';
+		if (h >= 24) return 'lit all day';
+		const win = lightWindow(env.schedule, st, defaults);
+		return win ? `${fmtMinutes(win.on)}–${fmtMinutes(win.off)}` : '';
+	};
+	const anchorLabel: Record<string, string> = {
+		start: 'Lights on at',
+		center: 'Day centred at',
+		end: 'Lights off at'
+	};
 
 	const summary = $derived.by(() => {
 		if (mode === 'manual') return 'Manual — you control the light';
-		const h = effectiveHours ?? 0;
-		const follows = env.schedule?.mode === 'phase' ? ' · follows stage' : '';
+		const follows = env.schedule?.mode !== 'phase' ? '' : stage ? ' · follows stage' : ' · no control grow';
 		const next = nextTransition(env.schedule, stage, defaults, nowMs);
 		const countdown = next ? ` · ${next.on ? 'on' : 'off'} in ${relTime(next.at - nowMs)}` : '';
-		return `${h}/${Math.max(0, 24 - h)} · on at ${env.schedule?.lightsOnAt}${follows}${countdown}`;
+		return `${windowLabel(env.schedule, stage, defaults)}${follows}${countdown}`;
 	});
 
 	async function setMode(next: ControlMode) {
@@ -98,24 +112,42 @@
 					No grow light assigned. Add one under <a href="/env/{env.id}?tab=equipment" class="underline">Equipment</a> to control the photoperiod.
 				</p>
 			{:else if mode === 'auto'}
-				<!-- Read-only photoperiod (automation owns these values). -->
+				<!-- Automatic still has preferences: these are the settings the
+				     automation follows, editable without dropping to manual. -->
 				<div class="grid gap-3 sm:grid-cols-3">
 					<div><span class="text-xs text-rig-400">Control grow</span><div class="mt-1 {ro}">{controlGrowName}</div></div>
 					<div><span class="text-xs text-rig-400">Schedule</span><div class="mt-1 {ro}">{env.schedule?.mode === 'custom' ? 'Custom' : 'Follow stage'}</div></div>
-					<div><span class="text-xs text-rig-400">Lights on at</span><div class="mt-1 {ro}">{env.schedule?.lightsOnAt ?? '—'}</div></div>
+					<div>
+						<span class="text-xs text-rig-400">{anchorLabel[env.schedule?.anchor ?? 'center']}</span>
+						<div class="mt-1 {ro}">{env.schedule?.lightsOnAt ?? '—'}</div>
+					</div>
 				</div>
 				{#if env.schedule?.mode === 'custom'}
-					<div class="mt-4 text-sm text-rig-300">{env.schedule.onHours}/{Math.max(0, 24 - env.schedule.onHours)} hours of light.</div>
+					<div class="mt-4 text-sm text-rig-300">{windowLabel(env.schedule, stage, defaults)} of light every day.</div>
 				{:else}
+					{#if !stage}
+						<p class="mt-4 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+							No control grow — several grows share this box, or none. Pick one under Edit schedule so the light follows its stage; until then it runs the default {ratioLabel(stageHours(''))}.
+						</p>
+					{/if}
 					<div class="mt-4 space-y-1">
-						<p class="text-xs text-rig-500">Hours of light per stage (recommended for the control grow).</p>
+						<p class="text-xs text-rig-500">Hours of light per stage, and the window each one lands on.</p>
 						{#each scheduleStages as st (st)}
 							<div class="flex items-center gap-3 text-sm">
 								<span class="w-24 capitalize text-rig-300">{titleCase(st)}</span>
-								<span class="tabular-nums text-rig-200">{stageHours(st)}/{Math.max(0, 24 - stageHours(st))}</span>
+								<span class="w-14 tabular-nums text-rig-200">{ratioLabel(stageHours(st))}</span>
+								<span class="tabular-nums text-rig-400">{stageWindow(st)}</span>
 								{#if st === stage}<span class="rounded-full bg-warn/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-warn">current</span>{/if}
 							</div>
 						{/each}
+					</div>
+				{/if}
+				{#if canWrite}
+					<div class="mt-4 flex items-center justify-between gap-3 border-t border-rig-800 pt-4">
+						<p class="text-xs text-rig-500">Automatic follows these preferences — change them here, no need to switch to manual.</p>
+						<Button variant="ghost" onclick={() => (editing = true)} class="shrink-0">
+							<Pencil size={14} class="mr-1.5" />Edit schedule
+						</Button>
 					</div>
 				{/if}
 			{:else}
@@ -138,3 +170,15 @@
 		</div>
 	{/if}
 </section>
+
+{#if canWrite}
+	<LightingModal
+		bind:open={editing}
+		environmentId={env.id}
+		{controlGrowId}
+		schedule={env.schedule}
+		{grows}
+		{defaults}
+		{hasPrimaryLight}
+	/>
+{/if}

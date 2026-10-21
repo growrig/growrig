@@ -6,6 +6,7 @@
 	import { getEnvironments, getBindings, getLocations, deleteBinding, deleteEnvironment, getEnvironmentYAML, updateEnvironmentYAML } from '$lib/api';
 	import type { Binding, Environment, Location } from '$lib/types';
 	import EnvironmentCard from '$lib/components/EnvironmentCard.svelte';
+	import StorageSection from './StorageSection.svelte';
 	import Code2 from '@lucide/svelte/icons/code-2';
 	import { Button, Dialog } from '$lib/components/ui';
 
@@ -110,6 +111,9 @@
 
 		<!-- Environment settings -->
 		<EnvironmentCard {env} {rooms} {locations} onChanged={reload} {flash} />
+
+		<!-- Recorded data bound to this environment -->
+		<StorageSection {id} />
 
 		<!-- Danger zone -->
 		<section class="space-y-3">

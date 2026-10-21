@@ -17,6 +17,9 @@ export type Category =
 	| 'combo';
 export type FanType = 'pc' | 'inline' | 'other';
 export type CameraType = 'mjpeg' | 'snapshot' | 'rtsp';
+/** What happens when a camera archive passes its age or size limit. Recorded
+ *  footage is never deleted unless 'delete' is chosen explicitly. */
+export type RetentionPolicy = 'alert' | 'delete';
 export type IrrigationType = 'autopot' | 'drip' | 'wick' | 'ebb_flow' | 'hand';
 export type IrrigationMode = 'passive' | 'controlled';
 
@@ -251,6 +254,11 @@ export interface LogCareInput {
 	amountMl?: number;
 	plantUnitIds?: string[];
 	applications?: CareApplicationInput[];
+	/** New container for actions carrying `potSize` (transplant): recording one
+	 *  repots every targeted plant, it is not just a note. */
+	potSize?: number;
+	potUnit?: PotUnit;
+	potType?: string;
 }
 
 /** One care action on the calendar (GET /api/calendar): a cross-grow, dated
@@ -733,11 +741,18 @@ export interface HistoryPage {
 
 export type LightScheduleMode = 'off' | 'phase' | 'custom';
 
+/** Which edge of the light window `lightsOnAt` pins when the on-duration
+ *  changes: the middle of the light period (the default), the on-time, or the
+ *  off-time. */
+export type LightAnchor = 'center' | 'start' | 'end';
+
 export interface LightSchedule {
 	environmentId: string;
 	mode: LightScheduleMode;
-	/** Local "HH:MM" the light comes on. */
+	/** Local "HH:MM" anchor time; `anchor` says which edge of the window it pins. */
 	lightsOnAt: string;
+	/** Anchor for `lightsOnAt`. Absent/empty behaves as 'center'. */
+	anchor: LightAnchor;
 	/** On-duration used in custom mode. */
 	onHours: number;
 	/** Per-stage on-hour overrides for phase mode; stages absent use defaults. */
@@ -884,6 +899,7 @@ export interface Binding {
 	cameraCaptureInterval?: number;
 	cameraRetentionDays?: number;
 	cameraStorageMb?: number;
+	cameraRetentionPolicy?: RetentionPolicy;
 	irrigationType?: IrrigationType;
 	irrigationMode?: IrrigationMode;
 	reservoirL?: number;

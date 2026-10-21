@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { errMsg } from '$lib/errors';
 	import { toast } from '$lib/toast.svelte';
-	import type { CareAction, CareField, FeedingRecipe, GrowDetail, LogCareInput, PlantDetail } from '$lib/types';
+	import type { CareAction, CareField, FeedingRecipe, GrowDetail, LogCareInput, PlantDetail, PotUnit } from '$lib/types';
 	import { logCare } from '$lib/api';
 	import { Button, Dialog, Select } from '$lib/components/ui';
 	import { plantDisplayName, plantNumbersById } from '$lib/format';
+	import { fmtDateTime } from '$lib/datetime';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 
 	interface Props {
@@ -49,7 +50,25 @@
 	let note = $state('');
 	let trainType = $state('');
 	let product = $state('');
+	// When it happened. Defaults to now; editable so a grower can write up
+	// yesterday's watering without it landing on today.
+	let occurredAt = $state('');
 	let potSize = $state<number | null>(null);
+	let potUnitValue = $state<PotUnit>('L');
+	let potType = $state('');
+	const potUnitItems = [
+		{ value: 'L', label: 'liters (L)' },
+		{ value: 'gal', label: 'gallons' }
+	];
+	const potTypeItems = [
+		{ value: '', label: '—' },
+		{ value: 'fabric', label: 'Fabric' },
+		{ value: 'plastic', label: 'Plastic' },
+		{ value: 'terracotta', label: 'Terracotta' },
+		{ value: 'air-pot', label: 'Air pot' },
+		{ value: 'autopot', label: 'AutoPot' },
+		{ value: 'other', label: 'Other' }
+	];
 	// Amendment doses: product key -> amount per plant, in that product's unit.
 	let doses = $state<Record<string, number | null>>({});
 
@@ -81,7 +100,15 @@
 		}
 	});
 
+	/** `now` as the value a datetime-local input expects (local, minute precision). */
+	function localNow(): string {
+		const d = new Date();
+		d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+		return d.toISOString().slice(0, 16);
+	}
+
 	function resetDetails() {
+		occurredAt = localNow();
 		amountMl = null;
 		perPlant = false;
 		perAmount = {};
@@ -91,6 +118,8 @@
 		trainType = '';
 		product = '';
 		potSize = null;
+		potUnitValue = 'L';
+		potType = '';
 		doses = {};
 		amendPhase = '';
 		err = '';
@@ -113,6 +142,10 @@
 	}
 
 	const selectedPlants = $derived(activePlants.filter((p) => selected.has(p.id)));
+	// Anything more than a minute in the past is a deliberate backdate.
+	const backdated = $derived(
+		!!occurredAt && Date.now() - new Date(occurredAt).getTime() > 90_000
+	);
 	const canSubmit = $derived(!!action && selectedPlants.length > 0 && !busy);
 
 	// Structured fields without their own column are folded into the note so
@@ -121,7 +154,6 @@
 		const lines: string[] = [];
 		if (has('trainType') && trainType.trim()) lines.push(`Training: ${trainType.trim()}`);
 		if (has('product') && product.trim()) lines.push(`Product: ${product.trim()}`);
-		if (has('potSize') && potSize) lines.push(`New pot: ${potSize} L`);
 		if (note.trim()) lines.push(note.trim());
 		return lines.join('\n');
 	}
@@ -132,6 +164,12 @@
 		err = '';
 		try {
 			const body: LogCareInput = { type: action.key, notes: composedNote() };
+			// Only send a time when it was actually moved off "now", so a
+			// same-moment log keeps the server's clock.
+			if (occurredAt && occurredAt !== localNow()) {
+				const at = new Date(occurredAt);
+				if (!isNaN(at.getTime())) body.occurredAt = at.toISOString();
+			}
 			if (has('recipe') && recipeId) body.recipeId = recipeId;
 			if (has('doses')) {
 				const out: Record<string, number> = {};
@@ -140,6 +178,11 @@
 					if (Number.isFinite(n) && n > 0) out[k] = n;
 				}
 				if (Object.keys(out).length) body.doses = out;
+			}
+			if (has('potSize') && potSize && potSize > 0) {
+				body.potSize = potSize;
+				body.potUnit = potUnitValue;
+				body.potType = potType;
 			}
 			if (has('ph') && ph != null) body.ph = ph;
 			if (has('ec') && ec != null) body.ec = ec;
@@ -158,8 +201,9 @@
 			}
 			await logCare(grow.id, body);
 			open = false;
+			const potNote = has('potSize') && potSize && potSize > 0 ? ` · ${potSize} ${potUnitValue} pot` : '';
 			toast.success(`${action.label} logged`, {
-				description: `${selectedPlants.length} ${selectedPlants.length === 1 ? 'plant' : 'plants'} · ${grow.name}`
+				description: `${selectedPlants.length} ${selectedPlants.length === 1 ? 'plant' : 'plants'} · ${grow.name}${potNote}`
 			});
 			onLogged?.();
 		} catch (e) {
@@ -378,8 +422,17 @@
 						<input bind:value={product} placeholder="e.g. neem oil" class="{field} mt-1" /></label>
 				{/if}
 				{#if has('potSize')}
-					<label class="block"><span class="text-xs text-rig-400">New pot size (L)</span>
-						<input type="number" min="0" step="any" bind:value={potSize} placeholder="e.g. 11" class="{field} mt-1" /></label>
+					<div class="grid gap-3 sm:grid-cols-3">
+						<label class="block"><span class="text-xs text-rig-400">New pot size</span>
+							<input type="number" min="0" step="any" bind:value={potSize} placeholder="e.g. 20" class="{field} mt-1" /></label>
+						<label class="block"><span class="text-xs text-rig-400">Unit</span>
+							<Select value={potUnitValue} onValueChange={(v) => (potUnitValue = v as PotUnit)} items={potUnitItems} class="mt-1" /></label>
+						<label class="block"><span class="text-xs text-rig-400">Pot type</span>
+							<Select value={potType} onValueChange={(v) => (potType = v)} items={potTypeItems} class="mt-1" /></label>
+					</div>
+					<p class="text-xs text-rig-500">
+						{selectedPlants.length === 1 ? 'This plant moves' : `These ${selectedPlants.length} plants move`} into the new pot; the old one is kept in the pot history.
+					</p>
 				{/if}
 
 				{#if has('note')}
@@ -390,7 +443,14 @@
 					<p class="text-xs text-rig-600">Photos coming soon.</p>
 				{/if}
 
-				<p class="text-xs text-rig-500">Logging for {selectedPlants.length} {selectedPlants.length === 1 ? 'plant' : 'plants'}.</p>
+				<label class="block border-t border-rig-800 pt-3">
+					<span class="text-xs text-rig-400">When</span>
+					<input type="datetime-local" bind:value={occurredAt} max={localNow()} class="{field} mt-1" />
+				</label>
+
+				<p class="text-xs text-rig-500">
+					Logging for {selectedPlants.length} {selectedPlants.length === 1 ? 'plant' : 'plants'}{backdated ? ` · backdated to ${fmtDateTime(occurredAt)}` : ''}.
+				</p>
 			</div>
 		{/if}
 

@@ -5,15 +5,17 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/auth.svelte';
-	import { getPlant, getGrow, getEnvironments, movePlant, repotPlant, updatePlant, harvestPlant, removePlant, getCultivars, cultivarImageURL } from '$lib/api';
-	import type { Environment, PlantView, PlantDetail, PlantPot, Cultivar, TrackingMode, PotUnit } from '$lib/types';
+	import { getPlant, getGrow, getEnvironments, movePlant, repotPlant, updatePlant, harvestPlant, removePlant, getCultivars, cultivarImageURL, getCare, getCareConfig, getRecipes } from '$lib/api';
+	import type { Environment, PlantView, PlantDetail, Cultivar, TrackingMode, PotUnit, GrowDetail, CareHistory, CareActionDef, FeedingRecipe } from '$lib/types';
 	import HistoryPanel from '$lib/components/HistoryPanel.svelte';
+	import PlantOverview from '$lib/components/plant/PlantOverview.svelte';
+	import LogCareModal from '$lib/components/LogCareModal.svelte';
+	import ClipboardList from '@lucide/svelte/icons/clipboard-list';
+	import type { PlantPot } from '$lib/types';
 	import { titleCase, daysSince, defaultPlantLabel, plantDisplayName, plantNumbersById } from '$lib/format';
 	import { Button, Dialog, Select, Breadcrumb } from '$lib/components/ui';
-	import MapPin from '@lucide/svelte/icons/map-pin';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Sprout from '@lucide/svelte/icons/sprout';
-	import FlaskConical from '@lucide/svelte/icons/flask-conical';
 
 	// Human-readable pot summary, e.g. "11 L · Fabric".
 	function potLabel(p: PlantPot): string {
@@ -42,7 +44,13 @@
 	}
 
 	let plant = $state<PlantView | null>(null);
+	let grow = $state<GrowDetail | null>(null);
 	let growPlants = $state<PlantDetail[]>([]);
+	let care = $state<CareHistory | null>(null);
+	let careDefs = $state<CareActionDef[]>([]);
+	let recipes = $state<FeedingRecipe[]>([]);
+	const careActions = $derived(careDefs.filter((d) => d.enabled));
+	let careOpen = $state(false);
 	let environments = $state<Environment[]>([]);
 	let cultivars = $state<Cultivar[]>([]);
 	let err = $state('');
@@ -57,10 +65,18 @@
 		try {
 			plant = await getPlant(id);
 			try {
-				const grow = await getGrow(plant.growId);
+				grow = await getGrow(plant.growId);
 				growPlants = grow.plants;
 			} catch {
+				grow = null;
 				growPlants = [];
+			}
+			// Care lives on the grow; the overview narrows it to this plant.
+			const growId = plant.growId;
+			getCare(growId).then((c) => (care = c)).catch(() => (care = null));
+			if (careDefs.length === 0) {
+				getCareConfig(growId).then((c) => (careDefs = c.actions)).catch(() => {});
+				getRecipes().then((r) => (recipes = r)).catch(() => {});
 			}
 			err = '';
 		} catch (e) {
@@ -151,12 +167,6 @@
 		}
 	}
 
-	// --- repot ---
-	let repotOpen = $state(false);
-	let rpSize = $state<number | null>(null);
-	let rpUnit = $state<PotUnit>('L');
-	let rpType = $state('');
-	let rpBusy = $state(false);
 	const potUnitItems = [
 		{ value: 'L', label: 'liters (L)' },
 		{ value: 'gal', label: 'gallons' }
@@ -167,29 +177,14 @@
 		{ value: 'plastic', label: 'Plastic' },
 		{ value: 'terracotta', label: 'Terracotta' },
 		{ value: 'air-pot', label: 'Air pot' },
+		{ value: 'autopot', label: 'AutoPot' },
 		{ value: 'other', label: 'Other' }
 	];
-	function openRepot() {
-		if (!plant) return;
-		// Prefill from the current pot as a convenient starting point.
-		rpSize = plant.currentPot?.size ?? null;
-		rpUnit = plant.currentPot?.unit ?? 'L';
-		rpType = plant.currentPot?.type ?? '';
-		repotOpen = true;
-	}
-	async function saveRepot() {
-		if (!plant || !rpSize || rpSize <= 0) return;
-		rpBusy = true;
-		try {
-			await repotPlant(plant.id, { size: rpSize, unit: rpUnit, type: rpType });
-			repotOpen = false;
-			toast.success('Plant repotted', { description: `${rpSize} ${rpUnit}${rpType ? ` · ${rpType}` : ''}` });
-			await reload();
-		} catch (e) {
-			err = errMsg(e, 'Failed');
-		} finally {
-			rpBusy = false;
-		}
+
+	// Care needs the grow (the dialog logs against it) and at least one action.
+	const canLogCare = $derived(!!grow && careActions.length > 0);
+	async function onCareLogged() {
+		await reload();
 	}
 
 	async function harvest() {
@@ -254,6 +249,11 @@
 						· {daysSince(plant.createdAt)}d old
 					</p>
 				</div>
+				{#if isAdmin && plant.status === 'active' && canLogCare}
+					<!-- The one way to record anything that happened to this plant —
+					     watering, feeding, transplanting — same dialog as the grow. -->
+					<Button class="ml-auto shrink-0" onclick={() => (careOpen = true)}><ClipboardList size={15} /> Log care</Button>
+				{/if}
 			</div>
 		</header>
 
@@ -270,32 +270,12 @@
 		</div>
 
 		{#if activeTab === 'overview'}
-			<section class="grid gap-3 sm:grid-cols-2">
-				<div class="rounded-xl border border-rig-800 bg-rig-900/40 p-4">
-					<div class="flex items-center gap-2 text-sm">
-						<MapPin size={15} class="text-rig-500" />
-						<span class="text-rig-400">Currently in</span>
-						{#if plant.currentEnvironmentId}
-							<a href="/env/{plant.currentEnvironmentId}" class="font-medium hover:text-rig-50 hover:underline">
-								{plant.currentEnvironmentName || plant.currentEnvironmentId}
-							</a>
-						{:else}
-							<span class="font-medium">nowhere</span>
-						{/if}
-					</div>
-				</div>
-				<div class="rounded-xl border border-rig-800 bg-rig-900/40 p-4">
-					<div class="flex items-center gap-2 text-sm">
-						<FlaskConical size={15} class="text-rig-500" />
-						<span class="text-rig-400">Pot</span>
-						<span class="font-medium">{plant.currentPot ? potLabel(plant.currentPot) : 'none'}</span>
-					</div>
-				</div>
-			</section>
+			<PlantOverview {plant} {grow} {care} onShowHistory={() => setTab('history')} />
 		{:else if activeTab === 'history'}
 			<HistoryPanel
 				plantId={plant.id}
 				photoGrowId={plant.growId}
+				canEdit={isAdmin}
 				empty="Nothing recorded for this plant yet."
 			/>
 		{:else if activeTab === 'settings'}
@@ -330,10 +310,15 @@
 							</div>
 							<div class="flex items-center justify-between gap-3 rounded-xl border border-rig-800 bg-rig-900/40 p-4">
 								<div>
-									<div class="text-sm font-medium">Repot</div>
-									<div class="text-xs text-rig-500">Current: {plant.currentPot ? potLabel(plant.currentPot) : 'none'}. Repotting keeps a pot history.</div>
+									<div class="text-sm font-medium">Pot</div>
+									<div class="text-xs text-rig-500">
+										Current: {plant.currentPot ? potLabel(plant.currentPot) : 'none'}. Moving it to a new pot is a
+										<button type="button" onclick={() => (careOpen = true)} class="underline hover:text-rig-300">transplant</button>, logged as care so it lands in the history.
+									</div>
 								</div>
-								<Button variant="secondary" onclick={openRepot}><FlaskConical size={15} /> Repot</Button>
+								{#if canLogCare}
+									<Button variant="secondary" onclick={() => (careOpen = true)}><ClipboardList size={15} /> Log care</Button>
+								{/if}
 							</div>
 						</section>
 
@@ -362,6 +347,17 @@
 	</div>
 
 	{#if isAdmin}
+		{#if grow}
+			<LogCareModal
+				bind:open={careOpen}
+				grow={{ ...grow, plants: growPlants }}
+				actions={careActions}
+				{recipes}
+				preselectedPlantIds={[plant.id]}
+				onLogged={onCareLogged}
+			/>
+		{/if}
+
 		<Dialog bind:open={editOpen} title="Edit plant" description="Change this plant's type, label, cultivar and pot. Each plant keeps its own id and history.">
 			<div class="space-y-4">
 				<div class="grid gap-3 sm:grid-cols-2">
@@ -407,27 +403,5 @@
 			</div>
 		</Dialog>
 
-		<Dialog bind:open={repotOpen} title="Repot" description="Record a new pot. The current pot is closed and kept in this plant's pot history.">
-			<div class="space-y-4">
-				<div class="grid gap-3 sm:grid-cols-3">
-					<label class="block">
-						<span class="text-xs text-rig-400">Pot size</span>
-						<input type="number" min="0" step="any" bind:value={rpSize} placeholder="e.g. 11" class="{field} mt-1" />
-					</label>
-					<label class="block">
-						<span class="text-xs text-rig-400">Unit</span>
-						<Select value={rpUnit} onValueChange={(v) => (rpUnit = v as PotUnit)} items={potUnitItems} class="mt-1" />
-					</label>
-					<label class="block">
-						<span class="text-xs text-rig-400">Pot type</span>
-						<Select value={rpType} onValueChange={(v) => (rpType = v)} items={potTypeItems} class="mt-1" />
-					</label>
-				</div>
-				<div class="flex justify-end gap-2 border-t border-rig-800 pt-4">
-					<Button variant="ghost" onclick={() => (repotOpen = false)}>Cancel</Button>
-					<Button onclick={saveRepot} disabled={rpBusy || !rpSize || rpSize <= 0}><FlaskConical size={15} /> Repot</Button>
-				</div>
-			</div>
-		</Dialog>
 	{/if}
 {/if}

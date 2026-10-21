@@ -18,6 +18,7 @@ import type {
 	CameraType,
 	IrrigationType,
 	IrrigationMode,
+	RetentionPolicy,
 	ControlMode,
 	ControlConfig,
 	CalendarResponse,
@@ -69,6 +70,7 @@ import type {
 	UserRole,
 	Weather,
 	LightSchedule,
+	LightAnchor,
 	LightScheduleMode,
 	Measurement,
 	StageLightDefaults,
@@ -128,8 +130,19 @@ function authenticatedMediaURL(path: string): string {
 }
 
 export interface CameraSnapshot { id: string; time: string }
-export const getCameraSnapshots = (bindingId: string, limit = 200) =>
-	json<CameraSnapshot[]>(`/api/bindings/${encodeURIComponent(bindingId)}/camera/archive?limit=${limit}`);
+/** Snapshots inside the requested window, downsampled to `limit` if denser. */
+export interface CameraArchivePage { snapshots: CameraSnapshot[]; total: number }
+export const getCameraSnapshots = (
+	bindingId: string,
+	options: { since?: Date; until?: Date; limit?: number } = {}
+) => {
+	const params = new URLSearchParams({ limit: String(options.limit ?? 200) });
+	if (options.since) params.set('since', String(options.since.getTime()));
+	if (options.until) params.set('until', String(options.until.getTime()));
+	return json<CameraArchivePage>(
+		`/api/bindings/${encodeURIComponent(bindingId)}/camera/archive?${params}`
+	);
+};
 export const cameraArchiveURL = (bindingId: string, snapshotId: string) =>
 	authenticatedMediaURL(`/api/bindings/${encodeURIComponent(bindingId)}/camera/archive/${encodeURIComponent(snapshotId)}`);
 export interface CameraStats {
@@ -144,6 +157,30 @@ export interface CameraStats {
 }
 export const getCameraStats = (bindingId: string) =>
 	json<CameraStats>(`/api/bindings/${encodeURIComponent(bindingId)}/camera/stats`);
+
+/** Disk used by one camera's archive, measured against its configured limits. */
+export interface CameraUsage {
+	bindingId: string;
+	name: string;
+	bytes: number;
+	snapshots: number;
+	oldest?: string;
+	newest?: string;
+	/** 0 = unlimited. */
+	limitBytes: number;
+	/** 0 = unlimited. */
+	limitDays: number;
+	policy: RetentionPolicy;
+	overStorage: boolean;
+	overAge: boolean;
+}
+export interface EnvironmentStorage {
+	environmentId: string;
+	totalBytes: number;
+	cameras: CameraUsage[];
+}
+export const getEnvironmentStorage = (id: string) =>
+	json<EnvironmentStorage>(`/api/environments/${encodeURIComponent(id)}/storage`);
 
 async function req(path: string, init?: RequestInit): Promise<Response> {
 	const headers = new Headers(init?.headers ?? { 'Content-Type': 'application/json' });
@@ -302,6 +339,7 @@ export interface BindingInput {
 	cameraCaptureInterval?: number;
 	cameraRetentionDays?: number;
 	cameraStorageMb?: number;
+	cameraRetentionPolicy?: RetentionPolicy;
 	irrigationType?: IrrigationType;
 	irrigationMode?: IrrigationMode;
 	reservoirL?: number;
@@ -492,6 +530,14 @@ export const skipTask = (id: string) =>
 export const logCare = (growID: string, b: LogCareInput) =>
 	json<CareEvent>(`/api/grows/${encodeURIComponent(growID)}/care`, {
 		method: 'POST',
+		body: JSON.stringify(b)
+	});
+
+/** Correct an already-logged care event. The action type is fixed; everything
+ *  else — when, note, readings, per-plant amounts — can be edited. */
+export const updateCare = (id: string, b: LogCareInput) =>
+	json<CareEvent>(`/api/care/${encodeURIComponent(id)}`, {
+		method: 'PUT',
 		body: JSON.stringify(b)
 	});
 
@@ -725,6 +771,7 @@ export const setControl = (envID: string, c: ControlInput) =>
 export interface ScheduleInput {
 	mode: LightScheduleMode;
 	lightsOnAt: string;
+	anchor: LightAnchor;
 	onHours: number;
 	stageOnHours: Record<string, number>;
 }

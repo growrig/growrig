@@ -5,7 +5,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { createBinding, getBindings, getCatalog, getDiscovery, updateBinding } from '$lib/api';
-	import type { Binding, BindingTemplate, CameraType, CatalogProduct, DiscoveredEntity, FanType, IrrigationType, Role } from '$lib/types';
+	import type { Binding, BindingTemplate, CameraType, CatalogProduct, DiscoveredEntity, FanType, IrrigationType, RetentionPolicy, Role } from '$lib/types';
 	import { Button, Select } from '$lib/components/ui';
 	import CameraPreview from '$lib/components/CameraPreview.svelte';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
@@ -40,8 +40,9 @@
 	let cameraStreamUrl = $state('');
 	let cameraType = $state<CameraType>('snapshot');
 	let cameraCaptureInterval = $state(60);
-	let cameraRetentionDays = $state(7);
-	let cameraStorageMb = $state(5120);
+	let cameraRetentionDays = $state(0);
+	let cameraStorageMb = $state(0);
+	let cameraRetentionPolicy = $state<RetentionPolicy>('alert');
 	let cameraSource = $state<'url' | 'homeassistant'>('url');
 	let cameraEntity = $state('');
 	let irrigationType = $state<IrrigationType>('autopot');
@@ -55,12 +56,33 @@
 		return entity.kind === template.kind && (!template.measurement || entity.measurement === template.measurement);
 	}
 
+	// Capabilities that cannot report anything without a Home Assistant entity.
+	// Fixtures, fans and passive irrigation carry none, and cameras get their
+	// source from the camera section below.
+	function needsEntity(template: BindingTemplate) {
+		return template.kind !== 'light' && template.kind !== 'fan' && template.kind !== 'irrigation' && template.kind !== 'camera';
+	}
+
 	function candidates(template: BindingTemplate) {
 		return discovered.filter((entity) =>
 			matches(template, entity) &&
 			(!selectedHADevice || entity.haDeviceId === selectedHADevice) &&
 			!bindings.some((binding) => binding.entity === entity.entity)
 		);
+	}
+
+	// Pre-map the likeliest entity for each measuring capability. The selects
+	// stay visible so the grower can correct the guess before installing.
+	function prefillEntities() {
+		const used = new Set<string>();
+		selected = (product?.provides ?? []).map((template) => {
+			if (!needsEntity(template)) return '';
+			const chosen = candidates(template)
+				.filter((entity) => !used.has(entity.entity))
+				.sort((a, b) => a.entity.length - b.entity.length)[0];
+			if (chosen) used.add(chosen.entity);
+			return chosen?.entity ?? '';
+		});
 	}
 
 	function rpmCandidates() {
@@ -118,6 +140,7 @@
 				fanType = product.fanType ?? 'other';
 				irrigationType = product.provides?.find((template) => template.kind === 'irrigation')?.irrigationType ?? 'autopot';
 				if (product.products?.length) selectVariant(product.products[0].id);
+				if (!product.haIntegration) prefillEntities();
 			}
 		} catch (e) {
 			error = errMsg(e, 'Installation data could not be loaded');
@@ -143,10 +166,19 @@
 	// streams from a URL the grower supplies here, instead of an HA entity.
 	const isGenericCamera = $derived(!!product && !product.haIntegration && (product.provides ?? []).some((template) => template.kind === 'camera'));
 	const isIrrigation = $derived(!!product && (product.provides ?? []).some((template) => template.kind === 'irrigation'));
+	// Products without a Home Assistant integration still need entities when
+	// they measure something — a BLE sensor reports through whichever
+	// integration exposed it, so the mapping is offered here directly.
+	const standaloneEntityTemplates = $derived(
+		product && !product.haIntegration
+			? (product.provides ?? []).map((template, index) => ({ template, index })).filter((item) => needsEntity(item.template))
+			: []
+	);
+	const standaloneEntitiesReady = $derived(standaloneEntityTemplates.every((item) => !!selected[item.index]));
 	const cameraEntities = $derived(discovered.filter((item) => item.kind === 'camera' && !bindings.some((binding) => binding.entity === item.entity)));
 	const cameraUrlValid = $derived(cameraType === 'rtsp' ? /^rtsp:\/\//i.test(cameraStreamUrl.trim()) : /^https?:\/\//.test(cameraStreamUrl.trim()));
 	const cameraSourceValid = $derived(cameraSource === 'url' ? cameraUrlValid : !!cameraEntity);
-	const ready = $derived(!!product && !!standaloneName.trim() && uniqueMappings && (!(product.provides ?? []).some((template) => template.kind === 'light') || lightWattage > 0) && (!isGenericCamera || cameraSourceValid) && (!product.haIntegration || (!!selectedHADevice && (product.provides ?? []).every((template, i) => (template.kind === 'light' || !!selected[i]) && (!template.rpmEntityDomain || !!selectedRPM[i])))));
+	const ready = $derived(!!product && !!standaloneName.trim() && uniqueMappings && (!(product.provides ?? []).some((template) => template.kind === 'light') || lightWattage > 0) && (!isGenericCamera || cameraSourceValid) && standaloneEntitiesReady && (!product.haIntegration ||(!!selectedHADevice && (product.provides ?? []).every((template, i) => (template.kind === 'light' || !!selected[i]) && (!template.rpmEntityDomain || !!selectedRPM[i])))));
 	const detectedName = $derived(discovered.find((entity) => entity.haDeviceId === selectedHADevice)?.deviceName);
 	const lights = $derived(bindings.filter((binding) => binding.environmentId === environmentId && binding.kind === 'light'));
 	const powerControllers = $derived.by(() => {
@@ -218,6 +250,7 @@
 					,cameraCaptureInterval: template.kind === 'camera' && cameraType === 'rtsp' ? cameraCaptureInterval : undefined
 					,cameraRetentionDays: template.kind === 'camera' && cameraType === 'rtsp' ? cameraRetentionDays : undefined
 					,cameraStorageMb: template.kind === 'camera' && cameraType === 'rtsp' ? cameraStorageMb : undefined
+					,cameraRetentionPolicy: template.kind === 'camera' && cameraType === 'rtsp' ? cameraRetentionPolicy : undefined
 					,irrigationType: template.kind === 'irrigation' ? irrigationType : undefined
 					// Manual AutoPot today: passive is the only supported mode.
 					,irrigationMode: template.kind === 'irrigation' ? 'passive' : undefined
@@ -342,6 +375,30 @@
 				<span class="text-sm text-rig-300">Name</span>
 				<input bind:value={standaloneName} class="mt-1 w-full rounded-md border border-rig-700 bg-rig-950 px-3 py-2.5 text-sm focus:border-leaf focus:outline-none" />
 			</label>
+			{#if standaloneEntityTemplates.length}
+				{#if haDevices.length > 1}
+					<label class="mt-4 block">
+						<span class="text-sm text-rig-300">Device <span class="text-rig-600">(fills the mapping below)</span></span>
+						<Select value={selectedHADevice} onValueChange={chooseDevice} placeholder="Choose a device…" items={haDevices.map((device) => ({ value: device.id, label: `${device.name}${device.model ? ` · ${device.model}` : ''} · ${device.entities} matching entities` }))} class="mt-1" />
+					</label>
+				{/if}
+				<div class="mt-4 space-y-3 rounded-lg border border-rig-800 p-4">
+					<div>
+						<h3 class="text-sm font-medium text-rig-200">Readings</h3>
+						<p class="mt-1 text-xs text-rig-500">Pick the entity that reports each measurement. Bluetooth devices appear once Home Assistant has paired them.</p>
+					</div>
+					{#each standaloneEntityTemplates as item}
+						<label class="grid items-center gap-2 sm:grid-cols-[1fr_1.7fr]">
+							<span class="text-sm text-rig-300">{item.template.label}</span>
+							<Select bind:value={selected[item.index]} placeholder="Choose an entity…" items={candidates(item.template).map((entity) => ({ value: entity.entity, label: `${entity.deviceName || entity.name} — ${entity.entity}` }))} />
+						</label>
+					{/each}
+					{#if !standaloneEntitiesReady && !standaloneEntityTemplates.some((item) => candidates(item.template).length)}
+						<p class="text-xs text-warn">No matching entity was found. Pair the device in Home Assistant, then reload this page.</p>
+					{/if}
+					{#if !uniqueMappings}<p class="text-xs text-danger">Each reading must use a different entity.</p>{/if}
+				</div>
+			{/if}
 			{#if isGenericCamera}
 				<label class="mt-4 block">
 					<span class="text-sm text-rig-300">Camera source</span>
@@ -371,10 +428,14 @@
 				{:else if cameraType === 'rtsp'}
 					<div class="mt-4 grid gap-3 sm:grid-cols-3">
 						<label><span class="text-sm text-rig-300">Snapshot interval</span><div class="relative mt-1"><input type="number" min="5" max="3600" bind:value={cameraCaptureInterval} class="w-full rounded-md border border-rig-700 bg-rig-950 px-3 py-2.5 pr-12 text-sm" /><span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-rig-500">sec</span></div></label>
-						<label><span class="text-sm text-rig-300">Retention</span><div class="relative mt-1"><input type="number" min="1" max="365" bind:value={cameraRetentionDays} class="w-full rounded-md border border-rig-700 bg-rig-950 px-3 py-2.5 pr-14 text-sm" /><span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-rig-500">days</span></div></label>
-						<label><span class="text-sm text-rig-300">Storage limit</span><div class="relative mt-1"><input type="number" min="100" max="102400" bind:value={cameraStorageMb} class="w-full rounded-md border border-rig-700 bg-rig-950 px-3 py-2.5 pr-12 text-sm" /><span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-rig-500">MB</span></div></label>
+						<label><span class="text-sm text-rig-300">Age limit</span><div class="relative mt-1"><input type="number" min="0" max="3650" bind:value={cameraRetentionDays} class="w-full rounded-md border border-rig-700 bg-rig-950 px-3 py-2.5 pr-14 text-sm" /><span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-rig-500">days</span></div></label>
+						<label><span class="text-sm text-rig-300">Storage limit</span><div class="relative mt-1"><input type="number" min="0" max="1024000" bind:value={cameraStorageMb} class="w-full rounded-md border border-rig-700 bg-rig-950 px-3 py-2.5 pr-12 text-sm" /><span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-rig-500">MB</span></div></label>
 					</div>
-					<p class="mt-2 text-xs text-rig-500">GrowRig stays connected, saves snapshots atomically, and automatically removes the oldest files.</p>
+					<label class="mt-3 block">
+						<span class="text-sm text-rig-300">When a limit is passed</span>
+						<Select value={cameraRetentionPolicy} onValueChange={(v) => (cameraRetentionPolicy = v as RetentionPolicy)} items={[{ value: 'alert', label: 'Keep everything, alert me when a limit is passed' }, { value: 'delete', label: 'Delete the oldest snapshots to stay within limits' }]} class="mt-1" />
+					</label>
+					<p class="mt-2 text-xs text-rig-500">GrowRig stays connected and saves snapshots atomically. Leave a limit at 0 for unlimited — nothing is deleted unless you choose deletion above.</p>
 				{/if}
 				{/if}
 			{/if}

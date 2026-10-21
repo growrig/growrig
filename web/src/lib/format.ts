@@ -150,3 +150,11 @@ export function titleCase(s: string): string {
 export function fmtLatencyMs(ms: number): string {
 	return ms < 1 ? ms.toFixed(1) : String(Math.round(ms));
 }
+
+/** Disk usage in binary units, e.g. "869 MB" or "1.4 GB". */
+export function fmtBytes(bytes: number): string {
+	if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} GB`;
+	if (bytes >= 1 << 20) return `${Math.round(bytes / (1 << 20))} MB`;
+	if (bytes >= 1 << 10) return `${Math.round(bytes / (1 << 10))} KB`;
+	return `${bytes} B`;
+}

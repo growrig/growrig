@@ -40,19 +40,19 @@ export function bindingStatus(
 	const online = env ? (env.health === 'online' ? true : false) : null;
 
 	if (b.kind === 'sensor') {
-		const s = env?.sensors.find((x) => x.id === b.id);
+		const s = env?.sensors?.find((x) => x.id === b.id);
 		if (!s) return { value: '—', online: null };
 		const unit = b.measurement ? measurementUnit[b.measurement] : '';
 		return { value: s.ok ? `${s.value}${unit}` : '—', online: s.ok };
 	}
 	if (b.kind === 'fan') {
-		const c = env?.controls.find((x) => x.id === b.id);
+		const c = env?.controls?.find((x) => x.id === b.id);
 		if (!c) return { value: '—', online: env ? env.kind === 'tent' : null };
 		return { value: `${c.desiredSpeed}%${c.rpm ? ` · ${c.rpm} rpm` : ''}`, online };
 	}
 	if (b.kind === 'light') {
 		if (!b.powerControllerId) return { value: 'Unassigned', online: null };
-		const c = env?.controls.find((x) => x.id === b.id);
+		const c = env?.controls?.find((x) => x.id === b.id);
 		return { value: c ? (c.on ? 'On' : 'Off') : '—', online };
 	}
 	if (b.kind === 'power') {

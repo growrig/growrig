@@ -26,6 +26,9 @@ type Store struct {
 	feedingDir string
 	mediumDir  string
 	syncing    bool
+	// Set during migrate() when the camera retention policy column is first
+	// added; consumed by clearLegacyCameraRetention after the YAML sync.
+	resetCameraRetention bool
 }
 
 // Open opens (creating if needed) the SQLite database at path and applies the
@@ -50,7 +53,46 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// Must run after the YAML sync, which re-imports bindings (and their legacy
+	// limits) over whatever the database held.
+	if err := s.clearLegacyCameraRetention(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// clearLegacyCameraRetention resets camera age/size limits to unlimited once,
+// when upgrading from the release where they were deletion thresholds that
+// defaulted to 7 days / 5 GB. Those numbers were never a deliberate choice to
+// be warned at, and the new behaviour keeps footage instead of deleting it, so
+// carrying them forward would only produce alerts the user never asked for.
+func (s *Store) clearLegacyCameraRetention() error {
+	if !s.resetCameraRetention {
+		return nil
+	}
+	s.resetCameraRetention = false
+	res, err := s.db.Exec(
+		`UPDATE bindings SET camera_retention_days=0, camera_storage_mb=0, camera_retention_policy='alert'
+		 WHERE kind='camera' AND (camera_retention_days<>0 OR camera_storage_mb<>0)`)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil
+	}
+	// Mirror the reset into the YAML config, which is the source of truth on
+	// the next start.
+	envs, err := s.Environments()
+	if err != nil {
+		return err
+	}
+	for _, env := range envs {
+		if err := s.writeEnvironmentConfig(env.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -108,6 +150,7 @@ CREATE TABLE IF NOT EXISTS light_schedules (
     mode           TEXT NOT NULL DEFAULT 'off',
     lights_on_at   TEXT NOT NULL DEFAULT '06:00',
     on_hours       REAL NOT NULL DEFAULT 18,
+    anchor         TEXT NOT NULL DEFAULT 'center', -- which edge of the window lights_on_at pins
     phase_on_hours TEXT NOT NULL DEFAULT '{}' -- JSON map keyed by stage name
 );
 CREATE TABLE IF NOT EXISTS grows (
@@ -476,6 +519,24 @@ DROP TABLE IF EXISTS devices;
 			return err
 		}
 	}
+	// The camera age/size settings used to be deletion thresholds that defaulted
+	// to 7 days / 5 GB. They are now limits that only raise an alert, so values
+	// carried over from the old behaviour would start warning about limits the
+	// user never chose. Reset them to unlimited exactly once, when the policy
+	// column is introduced.
+	var hasRetentionPolicy int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('bindings') WHERE name='camera_retention_policy'`).Scan(&hasRetentionPolicy); err != nil {
+		return err
+	}
+	// Pre-anchor schedules pinned the lights-on time. The default is now a day
+	// centred on its midpoint, so they are converted once, when the column
+	// appears (see recentreLightSchedules).
+	var hasAnchor int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('light_schedules') WHERE name='anchor'`).Scan(&hasAnchor); err != nil {
+		return err
+	}
 	// Additive migrations for databases created before these columns existed.
 	for _, m := range []struct{ table, column, def string }{
 		{"environments", "model", "TEXT NOT NULL DEFAULT ''"},
@@ -514,10 +575,14 @@ DROP TABLE IF EXISTS devices;
 		{"bindings", "camera_capture_interval", "INTEGER NOT NULL DEFAULT 60"},
 		{"bindings", "camera_retention_days", "INTEGER NOT NULL DEFAULT 7"},
 		{"bindings", "camera_storage_mb", "INTEGER NOT NULL DEFAULT 5120"},
+		// Existing archives were being pruned on the old delete-by-default
+		// behaviour; migrating them to 'alert' stops any further deletion.
+		{"bindings", "camera_retention_policy", "TEXT NOT NULL DEFAULT 'alert'"},
 		{"bindings", "irrigation_type", "TEXT NOT NULL DEFAULT ''"},
 		{"bindings", "irrigation_mode", "TEXT NOT NULL DEFAULT ''"},
 		{"bindings", "reservoir_l", "REAL NOT NULL DEFAULT 0"},
 		{"bindings", "valve_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"light_schedules", "anchor", "TEXT NOT NULL DEFAULT 'center'"},
 		{"activity_log", "grow_id", "TEXT NOT NULL DEFAULT ''"},
 		{"inventory_items", "variants", "TEXT NOT NULL DEFAULT '[]'"},
 		{"inventory_items", "product_id", "TEXT NOT NULL DEFAULT ''"},
@@ -556,8 +621,43 @@ DROP TABLE IF EXISTS devices;
 		WHERE device_name='DIY ESP32 dual PC-fan controller'`); err != nil {
 		return err
 	}
+	s.resetCameraRetention = hasRetentionPolicy == 0
+	if hasAnchor == 0 {
+		if err := s.recentreLightSchedules(); err != nil {
+			return err
+		}
+	}
 	if err := s.migrateCyclesToGrows(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// recentreLightSchedules converts pre-anchor schedules, whose stored time was
+// the lights-on moment, to the centred anchor that is now the default. The
+// grower's full day (their longest photoperiod) keeps exactly the window it
+// had; only shorter stages move, contracting around that day's midpoint
+// instead of cutting the evening short. Runs once, when the anchor column is
+// first added.
+func (s *Store) recentreLightSchedules() error {
+	scheds, err := s.LightSchedules()
+	if err != nil {
+		return err
+	}
+	for _, sched := range scheds {
+		// The column default already reads these rows back as centred, so the
+		// stored time is interpreted here as what it was written as: the
+		// lights-on moment of the reference day.
+		onMin, ok := domain.ParseHHMM(sched.LightsOnAt)
+		if !ok {
+			continue
+		}
+		centred := domain.AnchorTimeFor(domain.AnchorCenter, onMin, sched.ReferenceHours())
+		if _, err := s.db.Exec(
+			`UPDATE light_schedules SET anchor='center', lights_on_at=? WHERE environment_id=?`,
+			centred, sched.EnvironmentID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1287,6 +1387,19 @@ func (s *Store) Repot(unitID string, size float64, unit, potType string, at time
 		return err
 	}
 	defer tx.Rollback()
+	// A backdated repot must not close the current pot before it was opened,
+	// which would leave a negative-length span in the history ("28 Jul – 26
+	// Jul"). Clamp to the open pot's start: the plant was, at the earliest, in
+	// the new pot from the moment the old one began.
+	var openStart sql.NullInt64
+	if err := tx.QueryRow(
+		`SELECT started_at FROM plant_pots WHERE plant_unit_id=? AND ended_at IS NULL`,
+		unitID).Scan(&openStart); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if openStart.Valid && at.UnixMilli() < openStart.Int64 {
+		at = time.UnixMilli(openStart.Int64)
+	}
 	if _, err := tx.Exec(
 		`UPDATE plant_pots SET ended_at=? WHERE plant_unit_id=? AND ended_at IS NULL`,
 		at.UnixMilli(), unitID); err != nil {
@@ -1309,12 +1422,13 @@ func (s *Store) SaveLightSchedule(sched domain.LightSchedule) error {
 		return err
 	}
 	_, err = s.db.Exec(
-		`INSERT INTO light_schedules (environment_id, mode, lights_on_at, on_hours, phase_on_hours)
-		 VALUES (?, ?, ?, ?, ?)
+		`INSERT INTO light_schedules (environment_id, mode, lights_on_at, on_hours, anchor, phase_on_hours)
+		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(environment_id) DO UPDATE SET
 		   mode=excluded.mode, lights_on_at=excluded.lights_on_at,
-		   on_hours=excluded.on_hours, phase_on_hours=excluded.phase_on_hours`,
-		sched.EnvironmentID, string(sched.Mode), sched.LightsOnAt, sched.OnHours, string(phases),
+		   on_hours=excluded.on_hours, anchor=excluded.anchor,
+		   phase_on_hours=excluded.phase_on_hours`,
+		sched.EnvironmentID, string(sched.Mode), sched.LightsOnAt, sched.OnHours, string(sched.Anchor), string(phases),
 	)
 	return err
 }
@@ -1323,7 +1437,7 @@ func (s *Store) SaveLightSchedule(sched domain.LightSchedule) error {
 // (manual) schedule with found=false when none is stored.
 func (s *Store) LightSchedule(envID string) (sched domain.LightSchedule, found bool, err error) {
 	row := s.db.QueryRow(
-		`SELECT mode, lights_on_at, on_hours, phase_on_hours FROM light_schedules WHERE environment_id=?`, envID)
+		`SELECT mode, lights_on_at, on_hours, anchor, phase_on_hours FROM light_schedules WHERE environment_id=?`, envID)
 	sched, err = scanLightSchedule(envID, row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.DefaultLightSchedule(envID), false, nil
@@ -1335,7 +1449,7 @@ func (s *Store) LightSchedule(envID string) (sched domain.LightSchedule, found b
 }
 
 func (s *Store) LightSchedules() ([]domain.LightSchedule, error) {
-	rows, err := s.db.Query(`SELECT environment_id, mode, lights_on_at, on_hours, phase_on_hours FROM light_schedules`)
+	rows, err := s.db.Query(`SELECT environment_id, mode, lights_on_at, on_hours, anchor, phase_on_hours FROM light_schedules`)
 	if err != nil {
 		return nil, err
 	}
@@ -1363,19 +1477,23 @@ func (s *Store) DeleteLightSchedule(envID string) error {
 // scanLightSchedule decodes the mode/on-at/hours/phase-overrides columns via
 // the given scan function into a schedule (EnvironmentID left to the caller).
 func scanLightSchedule(envID string, scan func(dst ...any) error) (domain.LightSchedule, error) {
-	var mode, onAt, stagesJSON string
+	var mode, onAt, anchor, stagesJSON string
 	var onHours float64
-	if err := scan(&mode, &onAt, &onHours, &stagesJSON); err != nil {
+	if err := scan(&mode, &onAt, &onHours, &anchor, &stagesJSON); err != nil {
 		return domain.LightSchedule{}, err
 	}
 	stageOn := map[string]float64{}
 	if stagesJSON != "" {
 		_ = json.Unmarshal([]byte(stagesJSON), &stageOn)
 	}
+	if anchor == "" {
+		anchor = string(domain.AnchorCenter)
+	}
 	return domain.LightSchedule{
 		EnvironmentID: envID,
 		Mode:          domain.LightScheduleMode(mode),
 		LightsOnAt:    onAt,
+		Anchor:        domain.LightAnchor(anchor),
 		OnHours:       onHours,
 		StageOnHours:  stageOn,
 	}, nil
@@ -1413,8 +1531,8 @@ func (s *Store) DeleteEnvironment(id string) error {
 
 func (s *Store) SaveBinding(b domain.Binding) error {
 	_, err := s.db.Exec(
-		`INSERT INTO bindings (id, device_id, device_name, product_id, power_controller_id, controller_channel_id, environment_id, kind, name, entity, measurement, role, rpm_entity, wattage, is_primary, fan_type, size_mm, max_rpm, airflow_cfm, static_pressure, starting_voltage, duct_size_inches, noise_dba, stream_url, camera_type, camera_capture_interval, camera_retention_days, camera_storage_mb, irrigation_type, irrigation_mode, reservoir_l, valve_count, created)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO bindings (id, device_id, device_name, product_id, power_controller_id, controller_channel_id, environment_id, kind, name, entity, measurement, role, rpm_entity, wattage, is_primary, fan_type, size_mm, max_rpm, airflow_cfm, static_pressure, starting_voltage, duct_size_inches, noise_dba, stream_url, camera_type, camera_capture_interval, camera_retention_days, camera_storage_mb, camera_retention_policy, irrigation_type, irrigation_mode, reservoir_l, valve_count, created)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   device_id=excluded.device_id, device_name=excluded.device_name,
 		   product_id=excluded.product_id,
@@ -1428,11 +1546,11 @@ func (s *Store) SaveBinding(b domain.Binding) error {
 		   duct_size_inches=excluded.duct_size_inches, noise_dba=excluded.noise_dba,
 		   stream_url=excluded.stream_url, camera_type=excluded.camera_type,
 		   camera_capture_interval=excluded.camera_capture_interval, camera_retention_days=excluded.camera_retention_days,
-		   camera_storage_mb=excluded.camera_storage_mb,
+		   camera_storage_mb=excluded.camera_storage_mb, camera_retention_policy=excluded.camera_retention_policy,
 		   irrigation_type=excluded.irrigation_type, irrigation_mode=excluded.irrigation_mode,
 		   reservoir_l=excluded.reservoir_l, valve_count=excluded.valve_count`,
 		b.ID, b.DeviceID, b.DeviceName, b.ProductID, b.PowerControllerID, b.ControllerChannelID, b.EnvironmentID, string(b.Kind), b.Name, b.Entity,
-		string(b.Measurement), string(b.Role), b.RPMEntity, b.Wattage, boolToInt(b.Primary), b.FanType, b.SizeMM, b.MaxRPM, b.AirflowCFM, b.StaticPressureMMH2O, b.StartingVoltage, b.DuctSizeInches, b.NoiseDBA, b.StreamURL, string(b.CameraType), b.CameraCaptureInterval, b.CameraRetentionDays, b.CameraStorageMB, string(b.IrrigationType), string(b.IrrigationMode), b.ReservoirL, b.ValveCount, time.Now().UnixNano(),
+		string(b.Measurement), string(b.Role), b.RPMEntity, b.Wattage, boolToInt(b.Primary), b.FanType, b.SizeMM, b.MaxRPM, b.AirflowCFM, b.StaticPressureMMH2O, b.StartingVoltage, b.DuctSizeInches, b.NoiseDBA, b.StreamURL, string(b.CameraType), b.CameraCaptureInterval, b.CameraRetentionDays, b.CameraStorageMB, string(b.CameraRetentionPolicy), string(b.IrrigationType), string(b.IrrigationMode), b.ReservoirL, b.ValveCount, time.Now().UnixNano(),
 	)
 	if err != nil {
 		return err
@@ -1513,7 +1631,7 @@ func boolToInt(b bool) int {
 
 func (s *Store) Bindings() ([]domain.Binding, error) {
 	rows, err := s.db.Query(
-		`SELECT id, device_id, device_name, product_id, power_controller_id, controller_channel_id, environment_id, kind, name, entity, measurement, role, rpm_entity, wattage, is_primary, fan_type, size_mm, max_rpm, airflow_cfm, static_pressure, starting_voltage, duct_size_inches, noise_dba, stream_url, camera_type, camera_capture_interval, camera_retention_days, camera_storage_mb, irrigation_type, irrigation_mode, reservoir_l, valve_count
+		`SELECT id, device_id, device_name, product_id, power_controller_id, controller_channel_id, environment_id, kind, name, entity, measurement, role, rpm_entity, wattage, is_primary, fan_type, size_mm, max_rpm, airflow_cfm, static_pressure, starting_voltage, duct_size_inches, noise_dba, stream_url, camera_type, camera_capture_interval, camera_retention_days, camera_storage_mb, camera_retention_policy, irrigation_type, irrigation_mode, reservoir_l, valve_count
 		 FROM bindings ORDER BY created`)
 	if err != nil {
 		return nil, err
@@ -1522,15 +1640,16 @@ func (s *Store) Bindings() ([]domain.Binding, error) {
 	var out []domain.Binding
 	for rows.Next() {
 		var b domain.Binding
-		var kind, measurement, role, cameraType, irrigationType, irrigationMode string
+		var kind, measurement, role, cameraType, retentionPolicy, irrigationType, irrigationMode string
 		var isPrimary int
-		if err := rows.Scan(&b.ID, &b.DeviceID, &b.DeviceName, &b.ProductID, &b.PowerControllerID, &b.ControllerChannelID, &b.EnvironmentID, &kind, &b.Name, &b.Entity, &measurement, &role, &b.RPMEntity, &b.Wattage, &isPrimary, &b.FanType, &b.SizeMM, &b.MaxRPM, &b.AirflowCFM, &b.StaticPressureMMH2O, &b.StartingVoltage, &b.DuctSizeInches, &b.NoiseDBA, &b.StreamURL, &cameraType, &b.CameraCaptureInterval, &b.CameraRetentionDays, &b.CameraStorageMB, &irrigationType, &irrigationMode, &b.ReservoirL, &b.ValveCount); err != nil {
+		if err := rows.Scan(&b.ID, &b.DeviceID, &b.DeviceName, &b.ProductID, &b.PowerControllerID, &b.ControllerChannelID, &b.EnvironmentID, &kind, &b.Name, &b.Entity, &measurement, &role, &b.RPMEntity, &b.Wattage, &isPrimary, &b.FanType, &b.SizeMM, &b.MaxRPM, &b.AirflowCFM, &b.StaticPressureMMH2O, &b.StartingVoltage, &b.DuctSizeInches, &b.NoiseDBA, &b.StreamURL, &cameraType, &b.CameraCaptureInterval, &b.CameraRetentionDays, &b.CameraStorageMB, &retentionPolicy, &irrigationType, &irrigationMode, &b.ReservoirL, &b.ValveCount); err != nil {
 			return nil, err
 		}
 		b.Kind = domain.BindingKind(kind)
 		b.Measurement = domain.Measurement(measurement)
 		b.Role = domain.Role(role)
 		b.CameraType = domain.CameraType(cameraType)
+		b.CameraRetentionPolicy = domain.RetentionPolicy(retentionPolicy)
 		b.IrrigationType = domain.IrrigationType(irrigationType)
 		b.IrrigationMode = domain.IrrigationMode(irrigationMode)
 		b.Primary = isPrimary != 0

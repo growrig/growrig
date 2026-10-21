@@ -238,3 +238,59 @@ func TestActivityLogPaginates(t *testing.T) {
 		t.Fatalf("pages overlap: %s == %s", page1[0].ID, page2[0].ID)
 	}
 }
+
+// A pre-anchor database stored the lights-on time; the anchor migration must
+// re-centre it so the grower's full day keeps its window and shorter stages
+// contract around its midpoint.
+func TestMigrateRecentresPreAnchorSchedules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveEnvironment(domain.Environment{ID: "tent-a", Name: "Tent A", Kind: domain.KindTent}); err != nil {
+		t.Fatal(err)
+	}
+	// 18/6 lights on at 06:00, the way schedules were stored before anchors.
+	if err := st.SaveLightSchedule(domain.LightSchedule{
+		EnvironmentID: "tent-a", Mode: domain.LightSchedulePhase,
+		LightsOnAt: "06:00", Anchor: domain.AnchorStart, StageOnHours: map[string]float64{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Drop the column to recreate a database that predates anchors, then
+	// re-run the migration the way a restart would.
+	if _, err := st.db.Exec(`ALTER TABLE light_schedules DROP COLUMN anchor`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	sched, found, err := st.LightSchedule("tent-a")
+	if err != nil || !found {
+		t.Fatalf("schedule not found: %v", err)
+	}
+	if sched.Anchor != domain.AnchorCenter || sched.LightsOnAt != "15:00" {
+		t.Fatalf("got anchor=%q at %q, want center at 15:00", sched.Anchor, sched.LightsOnAt)
+	}
+	// The 18/6 day is unchanged; flowering now contracts around its midpoint.
+	if on, off, _ := sched.Window("vegetative"); on != 6*60 || off != 0 {
+		t.Errorf("vegetative window moved: %d–%d, want 360–0", on, off)
+	}
+	if on, off, _ := sched.Window("flowering"); on != 9*60 || off != 21*60 {
+		t.Errorf("flowering window = %d–%d, want 540–1260", on, off)
+	}
+
+	// Re-running migrate() must not re-centre an already-migrated database.
+	if err := st.migrate(); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := st.LightSchedule("tent-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.LightsOnAt != "15:00" {
+		t.Errorf("second migration moved the anchor to %q", again.LightsOnAt)
+	}
+}

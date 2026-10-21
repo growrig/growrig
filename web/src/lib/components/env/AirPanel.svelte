@@ -116,17 +116,19 @@
 				<p class="mt-3 text-xs text-rig-500">Fixed speeds are held until you change them. An emergency over-temperature still forces every fan to full.</p>
 			{/if}
 
-			<!-- Climate targets & safety. Read-only while automatic (automation owns
-			     them); editable under manual control. -->
+			<!-- Climate targets & safety. These are the preferences automatic mode
+			     follows, so they stay editable in both modes. -->
 			{#if env.kind === 'tent'}
 				<div class="{mode === 'manual' && hasFans ? 'mt-5 border-t border-rig-800 pt-4' : ''}">
 					<div class="mb-3">
 						<h3 class="text-xs font-semibold uppercase tracking-wide text-rig-400">Targets &amp; safety</h3>
 						<p class="mt-0.5 text-xs text-rig-500">
-							{mode === 'auto' ? 'Climate targets drive automatic air exchange; the emergency limit always applies.' : 'Adjust the climate targets and safety limits.'}
+							{mode === 'auto'
+								? 'Climate targets drive automatic air exchange — adjust them here, no need to switch to manual. The emergency limit always applies.'
+								: 'Adjust the climate targets and safety limits.'}
 						</p>
 					</div>
-					<TargetsForm {env} readOnly={mode === 'auto'} onSaved={onChanged} {flash} />
+					<TargetsForm {env} readOnly={!canWrite} onSaved={onChanged} {flash} />
 				</div>
 			{/if}
 		</div>

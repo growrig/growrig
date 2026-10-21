@@ -146,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/environments/{id}/weather-history", s.requireEnvRead(s.getWeatherHistory))
 	mux.HandleFunc("GET /api/environments/{id}/schedule", s.requireEnvRead(s.getSchedule))
 	mux.HandleFunc("GET /api/environments/{id}/plants", s.requireEnvRead(s.getEnvironmentPlants))
+	mux.HandleFunc("GET /api/environments/{id}/storage", s.requireEnvRead(s.getEnvironmentStorage))
 
 	// Per-environment write (operate the grow).
 	mux.HandleFunc("PUT /api/environments/{id}/targets", s.requireEnvWrite(s.putTargets))
@@ -173,6 +174,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/grows/{id}/analytics", s.requireAuth(s.getGrowAnalytics))
 	mux.HandleFunc("GET /api/grows/{id}/care-config", s.requireAuth(s.getCareConfig))
 	mux.HandleFunc("PUT /api/grows/{id}/care-config", s.requireAdmin(s.putCareConfig))
+	mux.HandleFunc("PUT /api/care/{id}", s.requireAdmin(s.updateCare))
 	mux.HandleFunc("DELETE /api/care/{id}", s.requireAdmin(s.deleteCare))
 	mux.HandleFunc("PUT /api/plants/{id}", s.requireAdmin(s.updatePlant))
 	mux.HandleFunc("POST /api/plants/{id}/move", s.requireAdmin(s.movePlant))
@@ -616,15 +618,33 @@ func (s *Server) getCameraArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	snapshots, err := s.cameras.Snapshots(binding.EnvironmentID, binding.ID, limit)
+	since, err := parseTimeParam(r.URL.Query().Get("since"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("invalid since"))
+		return
+	}
+	until, err := parseTimeParam(r.URL.Query().Get("until"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody("invalid until"))
+		return
+	}
+	page, err := s.cameras.SnapshotRange(binding.EnvironmentID, binding.ID, since, until, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	if snapshots == nil {
-		snapshots = []camera.Snapshot{}
+	writeJSON(w, http.StatusOK, page)
+}
+
+// parseTimeParam accepts RFC3339 or unix milliseconds; empty means unbounded.
+func parseTimeParam(raw string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
 	}
-	writeJSON(w, http.StatusOK, snapshots)
+	if ms, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		return time.UnixMilli(ms), nil
+	}
+	return time.Parse(time.RFC3339, raw)
 }
 
 func (s *Server) getCameraArchiveImage(w http.ResponseWriter, r *http.Request) {
@@ -641,6 +661,28 @@ func (s *Server) getCameraArchiveImage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	http.ServeFile(w, r, path)
+}
+
+// environmentStorage reports how much disk the recorded data bound to one
+// environment occupies, so limits can be judged against real usage.
+type environmentStorage struct {
+	EnvironmentID string         `json:"environmentId"`
+	TotalBytes    int64          `json:"totalBytes"`
+	Cameras       []camera.Usage `json:"cameras"`
+}
+
+func (s *Server) getEnvironmentStorage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	cameras, err := s.cameras.EnvironmentUsage(id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	out := environmentStorage{EnvironmentID: id, Cameras: cameras}
+	for _, c := range cameras {
+		out.TotalBytes += c.Bytes
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) getCameraStats(w http.ResponseWriter, r *http.Request) {

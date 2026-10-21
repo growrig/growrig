@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { errMsg } from '$lib/errors';
 	import { untrack } from 'svelte';
-	import type { Grow, LightSchedule, LightScheduleMode, StageLightDefaults } from '$lib/types';
+	import type { Grow, LightAnchor, LightSchedule, LightScheduleMode, StageLightDefaults } from '$lib/types';
 	import { setControlGrow, setSchedule } from '$lib/api';
+	import { anchorTimeFor, fmtMinutes, onMinuteFor, ratioLabel } from '$lib/photoperiod';
 	import { titleCase } from '$lib/format';
 	import { Button, Dialog, Select, type SelectItem } from '$lib/components/ui';
 
@@ -33,6 +34,7 @@
 	// --- lighting fields ---
 	let mode = $state<LightScheduleMode>('off');
 	let lightsOnAt = $state('06:00');
+	let anchor = $state<LightAnchor>('center');
 	let customHours = $state(18);
 	// Per-stage hours for phase mode, seeded from overrides or recommended defaults.
 	let stageHours = $state<Record<string, number>>({});
@@ -55,7 +57,8 @@
 		untrack(() => {
 			growId = controlGrowId ?? '';
 			mode = schedule?.mode ?? 'off';
-			lightsOnAt = schedule?.lightsOnAt || '06:00';
+			anchor = schedule?.anchor || 'center';
+			lightsOnAt = schedule?.lightsOnAt || (anchor === 'start' ? '06:00' : '15:00');
 			customHours = schedule?.onHours ?? 18;
 			// Seed from the control grow's stages (not the reactive `stages`).
 			const seedGrow = grows.find((g) => g.id === (controlGrowId ?? ''));
@@ -86,9 +89,50 @@
 		{ value: 'phase', label: 'Follow stage' },
 		{ value: 'custom', label: 'Custom' }
 	];
+	const anchorItems: SelectItem[] = [
+		{ value: 'center', label: 'Middle of the light period' },
+		{ value: 'start', label: 'Lights-on time' },
+		{ value: 'end', label: 'Lights-off time' }
+	];
+	const anchorLabel: Record<LightAnchor, string> = {
+		start: 'Lights on at',
+		center: 'Day centred at',
+		end: 'Lights off at'
+	};
+	const anchorHint: Record<LightAnchor, string> = {
+		start: 'A shorter photoperiod ends earlier — 18/6 from 06:00 becomes 06:00–18:00 at 12/12.',
+		center: 'A shorter photoperiod shrinks around the same midday — 18/6 06:00–00:00 becomes 09:00–21:00 at 12/12.',
+		end: 'A shorter photoperiod starts later — 18/6 ending at 00:00 becomes 12:00–00:00 at 12/12.'
+	};
+
+	// The reference day used when converting between anchors: the grow's longest
+	// photoperiod (its full day, usually seedling/veg), not the current stage's
+	// shortened one. Centring on the current stage would just re-describe the
+	// window it already has — centring on the full day is what moves a 12/12
+	// flowering window back to the middle of the grower's day.
+	const referenceHours = $derived(
+		mode === 'custom' ? customHours : Math.max(0, ...stages.map((st) => stageHours[st] ?? 0))
+	);
+
+	// Switching anchor keeps the reference day where it is and re-derives the
+	// anchor time, so start ⇄ center ⇄ end round-trips without drifting.
+	function changeAnchor(next: LightAnchor) {
+		const onMin = onMinuteFor(anchor, lightsOnAt, referenceHours);
+		if (onMin != null) lightsOnAt = anchorTimeFor(next, onMin, referenceHours);
+		anchor = next;
+	}
 
 	function offHours(on: number): string {
-		return `${on}/${Math.max(0, 24 - on)}`;
+		return ratioLabel(on);
+	}
+
+	/** "09:00–21:00" for a photoperiod of `hours` under the current anchor. */
+	function windowFor(hours: number): string {
+		if (hours <= 0) return 'dark all day';
+		if (hours >= 24) return 'lit all day';
+		const onMin = onMinuteFor(anchor, lightsOnAt, hours);
+		if (onMin == null) return '';
+		return `${fmtMinutes(onMin)}–${fmtMinutes(onMin + Math.round(hours * 60))}`;
 	}
 
 	async function save() {
@@ -105,7 +149,7 @@
 					if (stageHours[st] !== (defaults[st] ?? 18)) stageOnHours[st] = stageHours[st];
 				}
 			}
-			await setSchedule(environmentId, { mode, lightsOnAt, onHours: customHours, stageOnHours });
+			await setSchedule(environmentId, { mode, lightsOnAt, anchor, onHours: customHours, stageOnHours });
 			open = false;
 			onSaved?.();
 		} catch (e) {
@@ -157,15 +201,22 @@
 				</label>
 				{#if mode !== 'off'}
 					<label class="block">
-						<span class="text-xs text-rig-400">Lights on at</span>
+						<span class="text-xs text-rig-400">Anchor the day on</span>
+						<Select value={anchor} onValueChange={(v) => changeAnchor(v as LightAnchor)} items={anchorItems} class="mt-1" />
+					</label>
+					<label class="block">
+						<span class="text-xs text-rig-400">{anchorLabel[anchor]}</span>
 						<input type="time" bind:value={lightsOnAt} class="{field} mt-1" />
 					</label>
 				{/if}
 			</div>
+			{#if mode !== 'off'}
+				<p class="text-xs text-rig-500">{anchorHint[anchor]}</p>
+			{/if}
 
 			{#if mode === 'custom'}
 				<label class="block">
-					<span class="text-xs text-rig-400">Hours of light ({offHours(customHours)})</span>
+					<span class="text-xs text-rig-400">Hours of light ({offHours(customHours)} · {windowFor(customHours)})</span>
 					<input type="number" min="0" max="24" step="0.5" bind:value={customHours} class="{field} mt-1" />
 				</label>
 			{:else if mode === 'phase'}
@@ -183,7 +234,7 @@
 								class="w-20 rounded-md border border-rig-700 bg-rig-950 px-2 py-1 text-sm focus:border-leaf focus:outline-none"
 							/>
 							<span class="text-xs text-rig-500">
-								{offHours(stageHours[st] ?? 0)}
+								{offHours(stageHours[st] ?? 0)} · <span class="tabular-nums text-rig-400">{windowFor(stageHours[st] ?? 0)}</span>
 								{#if stageHours[st] === (defaults[st] ?? 18)}· recommended{/if}
 							</span>
 						</div>

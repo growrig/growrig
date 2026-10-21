@@ -228,7 +228,7 @@
 		{:else if activeTab === 'equipment'}
 			<EquipmentTab {env} {canWrite} {isAdmin} />
 		{:else if activeTab === 'history'}
-			<HistoryTab environmentId={env.id} />
+			<HistoryTab environmentId={env.id} {isAdmin} />
 		{:else if activeTab === 'settings'}
 			<SettingsTab id={env.id} />
 		{/if}

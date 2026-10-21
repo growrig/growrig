@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Grow, GrowSummary, LightSchedule, StageLightDefaults } from '$lib/types';
 	import LightingModal from '$lib/components/LightingModal.svelte';
-	import { nextTransition } from '$lib/photoperiod';
+	import { nextTransition, windowLabel } from '$lib/photoperiod';
 	import { relTime } from '$lib/format';
 	import Sun from '@lucide/svelte/icons/sun';
 
@@ -30,20 +30,12 @@
 
 	const stage = $derived(grow?.stage ?? '');
 
-	const effectiveHours = $derived.by(() => {
-		if (!schedule || schedule.mode === 'off') return null;
-		if (schedule.mode === 'custom') return schedule.onHours;
-		return schedule.stageOnHours?.[stage] ?? defaults[stage] ?? 18;
-	});
-
 	const lightingSummary = $derived.by(() => {
 		if (!schedule || schedule.mode === 'off') return 'Lighting: manual';
-		const h = effectiveHours ?? 0;
-		const off = Math.max(0, 24 - h);
-		const follows = schedule.mode === 'phase' ? ' · follows stage' : '';
+		const follows = schedule.mode !== 'phase' ? '' : stage ? ' · follows stage' : ' · no control grow';
 		const next = nextTransition(schedule, stage, defaults, nowMs);
 		const countdown = next ? ` · ${next.on ? 'on' : 'off'} in ${relTime(next.at - nowMs)}` : '';
-		return `${h}/${off} · on at ${schedule.lightsOnAt}${follows}${countdown}`;
+		return `${windowLabel(schedule, stage, defaults)}${follows}${countdown}`;
 	});
 </script>
 

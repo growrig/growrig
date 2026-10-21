@@ -58,6 +58,7 @@ const streamOnlineWindow = 10 * time.Second
 var (
 	frameStartupTimeout = 20 * time.Second
 	frameStallTimeout   = 15 * time.Second
+	retentionInterval   = 5 * time.Minute
 )
 
 type workerState struct {
@@ -68,6 +69,13 @@ type workerState struct {
 type Snapshot struct {
 	ID   string    `json:"id"`
 	Time time.Time `json:"time"`
+}
+
+// SnapshotPage is a (possibly downsampled) window of the archive; Total counts
+// every snapshot in the window before downsampling.
+type SnapshotPage struct {
+	Snapshots []Snapshot `json:"snapshots"`
+	Total     int        `json:"total"`
 }
 
 // New builds a recorder that archives under environmentsDir. legacyDBPath is the
@@ -144,8 +152,13 @@ func (r *Recorder) Run(ctx context.Context) {
 	log.Printf("camera recorder: starting (archive=%s, ffmpeg=%s)", r.root, ffmpegPath())
 	r.migrateLegacyArchive()
 	r.reconcile(ctx)
+	r.enforceRetention()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	// Measuring an archive walks every file, so it runs on its own slow ticker
+	// rather than on each capture the way the old delete-on-save pass did.
+	retention := time.NewTicker(retentionInterval)
+	defer retention.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -153,6 +166,8 @@ func (r *Recorder) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			r.reconcile(ctx)
+		case <-retention.C:
+			r.enforceRetention()
 		}
 	}
 }
@@ -165,29 +180,114 @@ func (r *Recorder) Latest(environmentID, id string) string {
 }
 
 func (r *Recorder) Snapshots(environmentID, id string, limit int) ([]Snapshot, error) {
-	if limit <= 0 || limit > 1000 {
+	page, err := r.SnapshotRange(environmentID, id, time.Time{}, time.Time{}, limit)
+	return page.Snapshots, err
+}
+
+// SnapshotRange lists snapshots captured within [since, until] (zero bounds are
+// open ended), newest first. When more snapshots exist than limit, the range is
+// split into limit evenly spaced buckets and the newest snapshot of each bucket
+// is returned, so a timeline keeps a representative frame per pixel column
+// instead of only the most recent slice of the window.
+func (r *Recorder) SnapshotRange(environmentID, id string, since, until time.Time, limit int) (SnapshotPage, error) {
+	if limit <= 0 || limit > 2000 {
 		limit = 200
 	}
 	var snapshots []Snapshot
 	err := filepath.WalkDir(r.cameraDir(environmentID, id), func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || filepath.Base(path) == "latest.jpg" || filepath.Ext(path) != ".jpg" {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if skipArchiveDir(r.cameraDir(environmentID, id), path, since, until) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Base(path) == "latest.jpg" || filepath.Ext(path) != ".jpg" {
 			return nil
 		}
 		stamp := filepath.Base(path[:len(path)-len(filepath.Ext(path))])
 		at, err := time.ParseInLocation("20060102T150405.000", stamp, time.Local)
-		if err == nil {
-			snapshots = append(snapshots, Snapshot{ID: stamp, Time: at})
+		if err != nil {
+			return nil
 		}
+		if (!since.IsZero() && at.Before(since)) || (!until.IsZero() && at.After(until)) {
+			return nil
+		}
+		snapshots = append(snapshots, Snapshot{ID: stamp, Time: at})
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
-		return nil, err
+		return SnapshotPage{}, err
 	}
 	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i].Time.After(snapshots[j].Time) })
+	page := SnapshotPage{Total: len(snapshots), Snapshots: snapshots}
 	if len(snapshots) > limit {
-		snapshots = snapshots[:limit]
+		if since.IsZero() || until.IsZero() {
+			page.Snapshots = snapshots[:limit]
+		} else {
+			page.Snapshots = downsample(snapshots, since, until, limit)
+		}
 	}
-	return snapshots, nil
+	if page.Snapshots == nil {
+		page.Snapshots = []Snapshot{}
+	}
+	return page, nil
+}
+
+// downsample keeps the newest snapshot of each of limit evenly spaced buckets
+// spanning [since, until]. Input must be sorted newest first.
+func downsample(snapshots []Snapshot, since, until time.Time, limit int) []Snapshot {
+	span := until.Sub(since)
+	if span <= 0 {
+		return snapshots[:limit]
+	}
+	kept := make([]Snapshot, 0, limit)
+	previous := -1
+	for _, s := range snapshots {
+		bucket := int(float64(s.Time.Sub(since)) / float64(span) * float64(limit))
+		if bucket >= limit {
+			bucket = limit - 1
+		}
+		if bucket == previous {
+			continue
+		}
+		previous = bucket
+		kept = append(kept, s)
+	}
+	return kept
+}
+
+// skipArchiveDir reports whether a YYYY, YYYY/MM or YYYY/MM/DD archive
+// directory falls entirely outside the requested window.
+func skipArchiveDir(root, path string, since, until time.Time) bool {
+	if since.IsZero() && until.IsZero() {
+		return false
+	}
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == "." {
+		return false
+	}
+	parts := strings.Split(relative, string(filepath.Separator))
+	if len(parts) > 3 {
+		return false
+	}
+	layouts := []string{"2006", "2006/01", "2006/01/02"}
+	start, err := time.ParseInLocation(layouts[len(parts)-1], strings.Join(parts, "/"), time.Local)
+	if err != nil {
+		return false
+	}
+	var end time.Time
+	switch len(parts) {
+	case 1:
+		end = start.AddDate(1, 0, 0)
+	case 2:
+		end = start.AddDate(0, 1, 0)
+	default:
+		end = start.AddDate(0, 0, 1)
+	}
+	return (!since.IsZero() && !end.After(since)) || (!until.IsZero() && start.After(until))
 }
 
 func (r *Recorder) SnapshotPath(environmentID, id, stamp string) (string, error) {
@@ -525,10 +625,7 @@ func (r *Recorder) save(b domain.Binding, image []byte, now time.Time) error {
 	if err := atomicWrite(archive, image); err != nil {
 		return err
 	}
-	if err := atomicWrite(filepath.Join(dir, "latest.jpg"), image); err != nil {
-		return err
-	}
-	return r.cleanup(b, now)
+	return atomicWrite(filepath.Join(dir, "latest.jpg"), image)
 }
 
 func atomicWrite(path string, data []byte) error {
@@ -541,58 +638,260 @@ func atomicWrite(path string, data []byte) error {
 
 type archiveFile struct {
 	path string
-	mod  time.Time
+	at   time.Time
 	size int64
 }
 
-func (r *Recorder) cleanup(b domain.Binding, now time.Time) error {
-	root := r.cameraDir(b.EnvironmentID, b.ID)
+// Usage is the on-disk footprint of one camera's archive, measured against the
+// binding's configured limits.
+type Usage struct {
+	BindingID   string          `json:"bindingId"`
+	Name        string          `json:"name"`
+	Bytes       int64           `json:"bytes"`
+	Snapshots   int             `json:"snapshots"`
+	Oldest      *time.Time      `json:"oldest,omitempty"`
+	Newest      *time.Time      `json:"newest,omitempty"`
+	LimitBytes  int64           `json:"limitBytes"`  // 0 = unlimited
+	LimitDays   int             `json:"limitDays"`   // 0 = unlimited
+	Policy      RetentionPolicy `json:"policy"`      // what happens past a limit
+	OverStorage bool            `json:"overStorage"` // size limit exceeded
+	OverAge     bool            `json:"overAge"`     // snapshots older than the age limit exist
+}
+
+// RetentionPolicy mirrors domain.RetentionPolicy for JSON responses.
+type RetentionPolicy = domain.RetentionPolicy
+
+// scanArchive lists every archived snapshot under root. The capture time comes
+// from the filename, not the file's mtime: copying, restoring or rsyncing an
+// archive rewrites mtimes, and retention decisions must follow when a frame was
+// actually taken.
+func scanArchive(root string) ([]archiveFile, error) {
 	var files []archiveFile
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if filepath.Base(path) == "latest.jpg" || filepath.Ext(path) != ".jpg" {
+			return nil
+		}
+		stamp := filepath.Base(path[:len(path)-len(filepath.Ext(path))])
+		at, err := time.ParseInLocation("20060102T150405.000", stamp, time.Local)
 		if err != nil {
 			return nil
 		}
-		if d.IsDir() || filepath.Base(path) == "latest.jpg" || filepath.Ext(path) != ".jpg" {
+		info, err := d.Info()
+		if err != nil {
 			return nil
 		}
-		info, err := d.Info()
-		if err == nil {
-			files = append(files, archiveFile{path, info.ModTime(), info.Size()})
-		}
+		files = append(files, archiveFile{path: path, at: at, size: info.Size()})
 		return nil
 	})
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].at.Before(files[j].at) })
+	return files, nil
+}
+
+// Usage measures one camera archive against its configured limits without
+// changing anything on disk.
+func (r *Recorder) Usage(b domain.Binding) (Usage, error) {
+	files, err := scanArchive(r.cameraDir(b.EnvironmentID, b.ID))
+	if err != nil {
+		return Usage{}, err
+	}
+	usage := Usage{
+		BindingID:  b.ID,
+		Name:       b.Name,
+		Snapshots:  len(files),
+		LimitBytes: int64(b.CameraStorageMB) << 20,
+		LimitDays:  b.CameraRetentionDays,
+		Policy:     policyOf(b),
+	}
+	for _, f := range files {
+		usage.Bytes += f.size
+	}
+	if len(files) > 0 {
+		oldest, newest := files[0].at, files[len(files)-1].at
+		usage.Oldest, usage.Newest = &oldest, &newest
+		if b.CameraRetentionDays > 0 {
+			usage.OverAge = oldest.Before(ageCutoff(b, time.Now()))
+		}
+	}
+	usage.OverStorage = usage.LimitBytes > 0 && usage.Bytes > usage.LimitBytes
+	return usage, nil
+}
+
+// EnvironmentUsage measures every RTSP camera archive belonging to one
+// environment.
+func (r *Recorder) EnvironmentUsage(environmentID string) ([]Usage, error) {
+	bindings, err := r.store.Bindings()
+	if err != nil {
+		return nil, err
+	}
+	out := []Usage{}
+	for _, b := range bindings {
+		if b.EnvironmentID != environmentID || b.Kind != domain.KindCamera || b.CameraType != domain.CameraRTSP {
+			continue
+		}
+		usage, err := r.Usage(b)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, usage)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Bytes > out[j].Bytes })
+	return out, nil
+}
+
+func policyOf(b domain.Binding) domain.RetentionPolicy {
+	if b.CameraRetentionPolicy == domain.RetentionDelete {
+		return domain.RetentionDelete
+	}
+	return domain.RetentionAlert
+}
+
+func ageCutoff(b domain.Binding, now time.Time) time.Time {
+	return now.Add(-time.Duration(b.CameraRetentionDays) * 24 * time.Hour)
+}
+
+// enforceRetention checks every camera archive against its limits. Under the
+// default "alert" policy nothing is ever removed — an exceeded limit only opens
+// an alert. Deletion happens solely for bindings that opted into it.
+func (r *Recorder) enforceRetention() {
+	bindings, err := r.store.Bindings()
+	if err != nil {
+		log.Printf("camera retention: list bindings: %v", err)
+		return
+	}
+	for _, b := range bindings {
+		if b.Kind != domain.KindCamera || b.CameraType != domain.CameraRTSP {
+			continue
+		}
+		if policyOf(b) == domain.RetentionDelete {
+			if err := r.prune(b, time.Now()); err != nil {
+				log.Printf("camera retention %s: prune: %v", b.ID, err)
+			}
+		}
+		usage, err := r.Usage(b)
+		if err != nil {
+			log.Printf("camera retention %s: measure: %v", b.ID, err)
+			continue
+		}
+		r.reportUsage(b, usage)
+	}
+}
+
+// reportUsage keeps one alert per limit open for as long as it is exceeded.
+func (r *Recorder) reportUsage(b domain.Binding, usage Usage) {
+	storageKey := fmt.Sprintf("%s:camera-storage:%s", b.EnvironmentID, b.ID)
+	if usage.OverStorage {
+		r.raise(b, storageKey, "camera-storage",
+			fmt.Sprintf("%s archive is over its storage limit", b.Name),
+			fmt.Sprintf("%s uses %s of its %s limit. Nothing has been deleted — raise the limit, enable automatic deletion, or free space manually.",
+				b.Name, formatBytes(usage.Bytes), formatBytes(usage.LimitBytes)))
+	} else {
+		r.clear(storageKey)
+	}
+
+	ageKey := fmt.Sprintf("%s:camera-retention:%s", b.EnvironmentID, b.ID)
+	if usage.OverAge && usage.Oldest != nil {
+		r.raise(b, ageKey, "camera-retention",
+			fmt.Sprintf("%s archive is older than its retention limit", b.Name),
+			fmt.Sprintf("%s holds snapshots back to %s, beyond the %d-day limit. Nothing has been deleted — raise the limit, enable automatic deletion, or remove old footage manually.",
+				b.Name, usage.Oldest.Format("2 Jan 2006"), usage.LimitDays))
+	} else {
+		r.clear(ageKey)
+	}
+}
+
+func (r *Recorder) raise(b domain.Binding, key, kind, title, message string) {
+	if err := r.store.OpenAlert(domain.Alert{
+		Key: key, EnvironmentID: b.EnvironmentID, DeviceID: b.DeviceID,
+		Severity: domain.AlertWarning, Kind: kind, Title: title, Message: message,
+	}); err != nil {
+		log.Printf("camera retention %s: open alert: %v", b.ID, err)
+	}
+}
+
+func (r *Recorder) clear(key string) {
+	if err := r.store.ResolveAlert(key); err != nil {
+		log.Printf("camera retention: resolve alert %s: %v", key, err)
+	}
+}
+
+// prune deletes archived snapshots past the binding's limits, oldest first. It
+// runs only for bindings whose policy is "delete".
+func (r *Recorder) prune(b domain.Binding, now time.Time) error {
+	root := r.cameraDir(b.EnvironmentID, b.ID)
+	files, err := scanArchive(root)
 	if err != nil {
 		return err
 	}
-	retention := b.CameraRetentionDays
-	if retention <= 0 {
-		retention = 7
-	}
-	cutoff := now.Add(-time.Duration(retention) * 24 * time.Hour)
 	var total int64
 	for _, f := range files {
-		if f.mod.Before(cutoff) {
-			_ = os.Remove(f.path)
-		} else {
-			total += f.size
+		total += f.size
+	}
+	removed := 0
+	remaining := files[:0]
+	if b.CameraRetentionDays > 0 {
+		cutoff := ageCutoff(b, now)
+		for _, f := range files {
+			if f.at.Before(cutoff) && os.Remove(f.path) == nil {
+				total -= f.size
+				removed++
+				continue
+			}
+			remaining = append(remaining, f)
+		}
+		files = remaining
+	}
+	if limit := int64(b.CameraStorageMB) << 20; limit > 0 {
+		// files is sorted oldest first, so the oldest footage goes first.
+		for _, f := range files {
+			if total <= limit {
+				break
+			}
+			if os.Remove(f.path) == nil {
+				total -= f.size
+				removed++
+			}
 		}
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].mod.Before(files[j].mod) })
-	limit := int64(b.CameraStorageMB)
-	if limit <= 0 {
-		limit = 5120
-	}
-	limit *= 1 << 20
-	for _, f := range files {
-		if total <= limit {
-			break
-		}
-		if f.mod.Before(cutoff) {
-			continue
-		}
-		if os.Remove(f.path) == nil {
-			total -= f.size
-		}
+	if removed > 0 {
+		log.Printf("camera retention %s: deleted %d snapshot(s), archive now %s", b.ID, removed, formatBytes(total))
+		pruneEmptyDirs(root)
 	}
 	return nil
+}
+
+// pruneEmptyDirs removes the year/month/day folders left behind once their
+// snapshots are gone. root itself is kept — it still holds latest.jpg.
+func pruneEmptyDirs(root string) {
+	var dirs []string
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() && path != root {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+	// Deepest first, so emptying a day folder can also empty its month.
+	sort.Slice(dirs, func(i, j int) bool { return len(dirs[i]) > len(dirs[j]) })
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err == nil && len(entries) == 0 {
+			_ = os.Remove(dir)
+		}
+	}
+}
+
+func formatBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.0f MB", float64(n)/(1<<20))
+	default:
+		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
+	}
 }

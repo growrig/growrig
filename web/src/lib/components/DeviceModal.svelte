@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { errMsg } from '$lib/errors';
-	import type { Binding, CameraType, CatalogProduct, DiscoveredEntity, FanType, IrrigationType, Measurement, Role } from '$lib/types';
+	import type { Binding, CameraType, CatalogProduct, DiscoveredEntity, FanType, IrrigationType, Measurement, RetentionPolicy, Role } from '$lib/types';
 	import { createBinding, updateBinding } from '$lib/api';
 	import { Button, Dialog, Select, Switch, type SelectItem } from '$lib/components/ui';
 	import CatalogDevicePicker, { type BindingDraft } from '$lib/components/CatalogDevicePicker.svelte';
@@ -59,8 +59,9 @@
 	let streamUrl = $state('');
 	let cameraType = $state<CameraType>('snapshot');
 	let cameraCaptureInterval = $state(60);
-	let cameraRetentionDays = $state(7);
-	let cameraStorageMb = $state(5120);
+	let cameraRetentionDays = $state(0);
+	let cameraStorageMb = $state(0);
+	let cameraRetentionPolicy = $state<RetentionPolicy>('alert');
 	let cameraSource = $state<'url' | 'homeassistant'>('url');
 	let irrigationType = $state<IrrigationType>('autopot');
 	let reservoirL = $state(0);
@@ -75,8 +76,9 @@
 			streamUrl = binding.streamUrl ?? '';
 			cameraType = binding.cameraType ?? 'snapshot';
 			cameraCaptureInterval = binding.cameraCaptureInterval ?? 60;
-			cameraRetentionDays = binding.cameraRetentionDays ?? 7;
-			cameraStorageMb = binding.cameraStorageMb ?? 5120;
+			cameraRetentionDays = binding.cameraRetentionDays ?? 0;
+			cameraStorageMb = binding.cameraStorageMb ?? 0;
+			cameraRetentionPolicy = binding.cameraRetentionPolicy ?? 'alert';
 			cameraSource = binding.entity ? 'homeassistant' : 'url';
 			measurement = binding.measurement ?? 'temperature';
 			role = binding.role ?? 'unassigned';
@@ -111,6 +113,10 @@
 		{ value: 'snapshot', label: 'Snapshot (refreshing JPEG URL)' },
 		{ value: 'mjpeg', label: 'MJPEG stream' },
 		{ value: 'rtsp', label: 'RTSP unicast (relayed by GrowRig)' }
+	];
+	const retentionPolicyItems: SelectItem[] = [
+		{ value: 'alert', label: 'Keep everything, alert me when a limit is passed' },
+		{ value: 'delete', label: 'Delete the oldest snapshots to stay within limits' }
 	];
 	const cameraEntityItems = $derived<SelectItem[]>(discovered
 		.filter((item) => item.kind === 'camera' && (item.entity === binding?.entity || !usedEntities.has(item.entity)))
@@ -189,6 +195,7 @@
 				,cameraCaptureInterval: binding.kind === 'camera' && cameraType === 'rtsp' ? cameraCaptureInterval : undefined
 				,cameraRetentionDays: binding.kind === 'camera' && cameraType === 'rtsp' ? cameraRetentionDays : undefined
 				,cameraStorageMb: binding.kind === 'camera' && cameraType === 'rtsp' ? cameraStorageMb : undefined
+				,cameraRetentionPolicy: binding.kind === 'camera' && cameraType === 'rtsp' ? cameraRetentionPolicy : undefined
 				,irrigationType: binding.kind === 'irrigation' ? irrigationType : undefined
 				,irrigationMode: binding.kind === 'irrigation' ? (binding.irrigationMode ?? 'passive') : undefined
 				,reservoirL: binding.kind === 'irrigation' ? reservoirL || undefined : undefined
@@ -316,9 +323,14 @@
 					<p class="text-xs text-rig-500">RTSP is relayed over TCP after saving. Credentials remain on the GrowRig server.</p>
 					<div class="grid grid-cols-3 gap-3">
 						<label><span class="text-xs text-rig-400">Snapshot interval</span><div class="relative mt-1"><input type="number" min="5" max="3600" bind:value={cameraCaptureInterval} class={field} /><span class="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-rig-500">sec</span></div></label>
-						<label><span class="text-xs text-rig-400">Retention</span><div class="relative mt-1"><input type="number" min="1" max="365" bind:value={cameraRetentionDays} class={field} /><span class="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-rig-500">days</span></div></label>
-						<label><span class="text-xs text-rig-400">Storage limit</span><div class="relative mt-1"><input type="number" min="100" max="102400" bind:value={cameraStorageMb} class={field} /><span class="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-rig-500">MB</span></div></label>
+						<label><span class="text-xs text-rig-400">Age limit</span><div class="relative mt-1"><input type="number" min="0" max="3650" bind:value={cameraRetentionDays} class={field} /><span class="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-rig-500">days</span></div></label>
+						<label><span class="text-xs text-rig-400">Storage limit</span><div class="relative mt-1"><input type="number" min="0" max="1024000" bind:value={cameraStorageMb} class={field} /><span class="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-rig-500">MB</span></div></label>
 					</div>
+					<label class="block">
+						<span class="text-xs text-rig-400">When a limit is passed</span>
+						<Select value={cameraRetentionPolicy} onValueChange={(v) => (cameraRetentionPolicy = v as RetentionPolicy)} items={retentionPolicyItems} class="mt-1" />
+					</label>
+					<p class="text-xs text-rig-500">Leave a limit at 0 for unlimited. Recordings are never deleted unless you choose deletion above.</p>
 				{/if}
 				{/if}
 			{:else if binding.kind === 'irrigation'}

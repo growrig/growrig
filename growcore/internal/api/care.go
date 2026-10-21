@@ -189,18 +189,11 @@ func (s *Server) putCareConfig(w http.ResponseWriter, r *http.Request) {
 
 // --- Care: the grow's manual-action journal ---
 
-// careApplicationView augments an application with the target plant's label so
-// the client can render per-plant detail without a second lookup.
-type careApplicationView struct {
-	domain.CareApplication
-	PlantLabel string `json:"plantLabel"`
-}
-
 // careEventView is a care event with resolved plant labels and recipe name.
 type careEventView struct {
 	domain.CareEvent
-	Applications []careApplicationView `json:"applications"`
-	RecipeName   string                `json:"recipeName,omitempty"`
+	Applications []domain.CareApplication `json:"applications"`
+	RecipeName   string                   `json:"recipeName,omitempty"`
 	// DosesLabel is Doses rendered for display ("2 tabs · 1 g Mycotrex"), so
 	// clients don't each re-resolve product keys against the recipe.
 	DosesLabel string `json:"dosesLabel,omitempty"`
@@ -297,13 +290,10 @@ func (s *Server) toCareEventView(e domain.CareEvent, plants map[string]domain.Pl
 		RecipeName: s.recipeName(e.RecipeID),
 		DosesLabel: s.doseSummary(e.RecipeID, e.Doses),
 	}
-	v.Applications = make([]careApplicationView, 0, len(e.Applications))
+	v.Applications = make([]domain.CareApplication, 0, len(e.Applications))
 	for _, a := range e.Applications {
-		label := a.PlantUnitID
-		if u, ok := plants[a.PlantUnitID]; ok {
-			label = plantLabel(u)
-		}
-		v.Applications = append(v.Applications, careApplicationView{CareApplication: a, PlantLabel: label})
+		a.PlantLabel = resolvePlantLabel(plants, a.PlantUnitID)
+		v.Applications = append(v.Applications, a)
 	}
 	// Nil the embedded slice so JSON serialises the augmented one, not both.
 	v.CareEvent.Applications = nil
@@ -398,6 +388,12 @@ type logCareBody struct {
 	AmountML     float64                `json:"amountMl"`
 	PlantUnitIDs []string               `json:"plantUnitIds"`
 	Applications []careApplicationInput `json:"applications"`
+	// The new container, for actions carrying the potSize field (transplant).
+	// Recording one actually repots every targeted plant rather than only
+	// noting the size in the journal.
+	PotSize float64 `json:"potSize"`
+	PotUnit string  `json:"potUnit"`
+	PotType string  `json:"potType"`
 }
 
 func (s *Server) logCare(w http.ResponseWriter, r *http.Request) {
@@ -481,13 +477,100 @@ func (s *Server) logCare(w http.ResponseWriter, r *http.Request) {
 			Note:        strings.TrimSpace(in.Note),
 		})
 	}
+	// A transplant is a pot change, not just a note about one: move every
+	// targeted plant into the new container so the plant's current pot and its
+	// pot history stay true.
+	repot := b.PotSize > 0 && actionHasField(action, species.FieldPotSize)
+	if b.PotSize < 0 {
+		writeJSON(w, http.StatusBadRequest, errBody("pot size cannot be negative"))
+		return
+	}
 	if err := s.store.SaveCareEvent(event); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	if repot {
+		for _, app := range event.Applications {
+			if err := s.store.Repot(app.PlantUnitID, b.PotSize, potUnit(b.PotUnit), strings.TrimSpace(b.PotType), event.OccurredAt); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+	}
 	s.growActivity(grow.ID, "", "info", "care",
 		careJournalMessage(action, event, s.recipeName(event.RecipeID), s.doseSummary(event.RecipeID, event.Doses)))
 	writeJSON(w, http.StatusOK, s.toCareEventView(event, plants))
+}
+
+// updateCare corrects an already-logged care event: when it happened, the note,
+// the solution readings and the per-plant amounts. The action type is fixed —
+// a mis-picked action is a delete plus a fresh log, not an edit.
+func (s *Server) updateCare(w http.ResponseWriter, r *http.Request) {
+	existing, ok, err := s.store.CareEvent(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errBody("care event not found"))
+		return
+	}
+	var b logCareBody
+	if err := decode(r, &b); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	plants, err := s.growPlants(existing.GrowID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	updated := existing
+	updated.OccurredAt = parseDate(b.OccurredAt)
+	if b.OccurredAt == "" {
+		updated.OccurredAt = existing.OccurredAt
+	}
+	updated.Notes = strings.TrimSpace(b.Notes)
+	updated.RecipeID = strings.TrimSpace(b.RecipeID)
+	updated.PH, updated.EC = b.PH, b.EC
+	updated.RunoffML, updated.RunoffPH = b.RunoffML, b.RunoffPH
+	updated.Doses = positiveDoses(b.Doses)
+
+	// Applications are replaced wholesale when given, so a plant can be dropped
+	// from an event that recorded it by mistake.
+	if len(b.Applications) > 0 || len(b.PlantUnitIDs) > 0 {
+		inputs := b.Applications
+		if len(inputs) == 0 {
+			for _, unitID := range b.PlantUnitIDs {
+				inputs = append(inputs, careApplicationInput{PlantUnitID: unitID, AmountML: b.AmountML})
+			}
+		}
+		updated.Applications = nil
+		for _, in := range inputs {
+			if _, ok := plants[in.PlantUnitID]; !ok {
+				writeJSON(w, http.StatusBadRequest, errBody("plant "+in.PlantUnitID+" is not part of this grow"))
+				return
+			}
+			updated.Applications = append(updated.Applications, domain.CareApplication{
+				ID:          id(updated.Type, "careapp"),
+				CareEventID: updated.ID,
+				PlantUnitID: in.PlantUnitID,
+				AmountML:    in.AmountML,
+				Note:        strings.TrimSpace(in.Note),
+			})
+		}
+		if len(updated.Applications) == 0 {
+			writeJSON(w, http.StatusBadRequest, errBody("a care event needs at least one plant"))
+			return
+		}
+	}
+
+	if err := s.store.UpdateCareEvent(updated); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.toCareEventView(updated, plants))
 }
 
 func (s *Server) deleteCare(w http.ResponseWriter, r *http.Request) {
@@ -593,4 +676,23 @@ func formatVolume(ml float64) string {
 		return fmt.Sprintf("%.1f L", ml/1000)
 	}
 	return fmt.Sprintf("%.0f ml", ml)
+}
+
+// resolvePlantLabel names a plant for display, falling back to its id when the
+// unit is gone (a deleted plant still has its care history).
+func resolvePlantLabel(plants map[string]domain.PlantUnit, unitID string) string {
+	if u, ok := plants[unitID]; ok {
+		return plantLabel(u)
+	}
+	return unitID
+}
+
+// actionHasField reports whether a care action collects the given field.
+func actionHasField(a species.CareAction, f species.CareField) bool {
+	for _, have := range a.Fields {
+		if have == f {
+			return true
+		}
+	}
+	return false
 }

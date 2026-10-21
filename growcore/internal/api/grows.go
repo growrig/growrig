@@ -671,7 +671,13 @@ func (s *Server) setPlantStatus(status domain.PlantStatus, verb string) http.Han
 	}
 }
 
+// plantLabel names a plant the way the UI does: its cultivar if it has one,
+// else the grower's own label, else a generic word. Without the cultivar this
+// reads "Repotted plant" for every plant in a mixed grow.
 func plantLabel(u domain.PlantUnit) string {
+	if c := strings.TrimSpace(u.Cultivar); c != "" {
+		return c
+	}
 	if u.Label != "" {
 		return u.Label
 	}

@@ -83,6 +83,16 @@ const (
 	CameraRTSP     CameraType = "rtsp"
 )
 
+// RetentionPolicy decides what happens once an archive passes its configured
+// age or size limit. Recorded footage is the user's data, so the default is to
+// raise an alert and keep everything; deletion is strictly opt-in.
+type RetentionPolicy string
+
+const (
+	RetentionAlert  RetentionPolicy = "alert"
+	RetentionDelete RetentionPolicy = "delete"
+)
+
 // Measurement is what a sensor binding measures.
 type Measurement string
 
@@ -126,9 +136,10 @@ type Environment struct {
 	LocationID string `json:"locationId" yaml:"locationId,omitempty"`
 
 	// ControlGrowID optionally nominates the Grow whose current stage supplies
-	// this environment's automation presets (photoperiod). Empty means the
-	// light schedule's phase mode falls back to defaults. Must be set explicitly
-	// when several grows share one environment.
+	// this environment's automation presets (photoperiod). Empty means the only
+	// active grow with plants here drives it (see ResolveControlGrow); it must
+	// be set explicitly when several grows share one environment, otherwise the
+	// light schedule's phase mode falls back to defaults.
 	ControlGrowID string `json:"controlGrowId" yaml:"controlGrowId,omitempty"`
 
 	// Model is an optional descriptive field (e.g. the grow-tent product)
@@ -262,18 +273,47 @@ const (
 // AllLightScheduleModes lists the selectable schedule modes.
 var AllLightScheduleModes = []LightScheduleMode{LightScheduleOff, LightSchedulePhase, LightScheduleCustom}
 
+// LightAnchor says which edge of the light window AnchorAt pins. It only
+// matters when the on-duration changes (a stage change in phase mode, or an
+// edited duration): the anchored edge stays put and the rest of the window
+// moves around it.
+//
+//	center: 18/6 centred on 15:00 → 06:00–00:00; 12/12 → 09:00–21:00 (default)
+//	start:  18/6 on at 06:00 → 06:00–00:00; 12/12 → 06:00–18:00
+//	end:    18/6 off at 00:00 → 06:00–00:00; 12/12 → 12:00–00:00
+type LightAnchor string
+
+const (
+	// AnchorCenter pins the middle of the light period ("solar noon"), so a
+	// shorter photoperiod stays centred on the same part of the day. It is the
+	// default, and the zero value's meaning.
+	AnchorCenter LightAnchor = "center"
+	// AnchorStart pins the on-time: a shorter photoperiod ends earlier.
+	AnchorStart LightAnchor = "start"
+	// AnchorEnd pins the off-time: a shorter photoperiod starts later.
+	AnchorEnd LightAnchor = "end"
+)
+
+// AllLightAnchors lists the selectable anchors.
+var AllLightAnchors = []LightAnchor{AnchorCenter, AnchorStart, AnchorEnd}
+
 // LightSchedule is the photoperiod automation for an environment's primary
-// grow light. The light turns on at LightsOnAt (a local "HH:MM" wall-clock
-// time) and stays on for the effective number of hours; the remainder of the
-// 24h day is dark. Anchoring on wall-clock time (rather than counting from an
-// arbitrary start) keeps the dark period aligned to a real daily window.
+// grow light. The light is on for the effective number of hours each day,
+// positioned against the wall clock by AnchorAt and Anchor; the remainder of
+// the 24h day is dark. Anchoring on wall-clock time (rather than counting from
+// an arbitrary start) keeps the dark period aligned to a real daily window.
 //
 // In "phase" mode the on-duration follows the control grow's current stage.
 type LightSchedule struct {
 	EnvironmentID string            `json:"environmentId"`
 	Mode          LightScheduleMode `json:"mode"`
-	// LightsOnAt is the local time the light comes on, "HH:MM" (24h).
+	// LightsOnAt is the anchor wall-clock time, "HH:MM" (24h) local. What it
+	// pins depends on Anchor: the middle of the light period (center, the
+	// default), the on-time (start), or the off-time (end).
 	LightsOnAt string `json:"lightsOnAt"`
+	// Anchor selects which edge of the light window LightsOnAt pins. Empty
+	// means AnchorCenter, the default for new schedules.
+	Anchor LightAnchor `json:"anchor"`
 	// OnHours is the on-duration for custom mode.
 	OnHours float64 `json:"onHours"`
 	// StageOnHours holds per-stage overrides for phase mode, keyed by stage
@@ -282,12 +322,15 @@ type LightSchedule struct {
 }
 
 // DefaultLightSchedule is the schedule for an environment that has none saved:
-// manual control, with sensible on-time/duration seeds for the editor.
+// manual control, with sensible seeds for the editor. New schedules default to
+// a day centred on 15:00, so 18/6 runs 06:00–00:00 and a switch to 12/12 keeps
+// the same midday rather than cutting the evening short.
 func DefaultLightSchedule(envID string) LightSchedule {
 	return LightSchedule{
 		EnvironmentID: envID,
 		Mode:          LightScheduleOff,
-		LightsOnAt:    "06:00",
+		LightsOnAt:    "15:00",
+		Anchor:        AnchorCenter,
 		OnHours:       18,
 		StageOnHours:  map[string]float64{},
 	}
@@ -308,6 +351,79 @@ func (s LightSchedule) EffectiveOnHours(stage string) float64 {
 	return 18
 }
 
+// ReferenceHours is the schedule's full day: the custom duration, or the
+// longest photoperiod across the stages it can drive. It is the day the grower
+// set up, so it is what anchors are converted against — re-anchoring on a
+// shortened stage would only re-describe the window that stage already has.
+func (s LightSchedule) ReferenceHours() float64 {
+	if s.Mode == LightScheduleCustom {
+		return clampHours(s.OnHours)
+	}
+	longest := 0.0
+	consider := func(h float64) {
+		if h := clampHours(h); h > longest {
+			longest = h
+		}
+	}
+	for stage, h := range DefaultStageLightHours {
+		if override, ok := s.StageOnHours[stage]; ok {
+			h = override
+		}
+		consider(h)
+	}
+	// Stages outside the known set (custom stage names) count too.
+	for stage, h := range s.StageOnHours {
+		if _, known := DefaultStageLightHours[stage]; !known {
+			consider(h)
+		}
+	}
+	return longest
+}
+
+// AnchorTimeFor returns the "HH:MM" anchor time that keeps a window whose light
+// comes on at onMin (minutes since midnight) and runs for hours in place under
+// the given anchor. It is the inverse of the offset Window applies.
+func AnchorTimeFor(a LightAnchor, onMin int, hours float64) string {
+	span := int(clampHours(hours) * 60)
+	switch a {
+	case AnchorStart:
+		// The anchor time is the on-time itself.
+	case AnchorEnd:
+		onMin += span
+	default: // AnchorCenter
+		onMin += span / 2
+	}
+	onMin = ((onMin % 1440) + 1440) % 1440
+	return fmt.Sprintf("%02d:%02d", onMin/60, onMin%60)
+}
+
+// Window resolves the light-on window for the given stage as minutes since
+// local midnight: onMin is when the light comes on, offMin when it goes off
+// (offMin may be <= onMin when the window wraps past midnight). ok is false
+// when the anchor time is unparseable, or the window is degenerate (always on
+// or always off).
+func (s LightSchedule) Window(stage string) (onMin, offMin int, ok bool) {
+	hours := s.EffectiveOnHours(stage)
+	if hours <= 0 || hours >= 24 {
+		return 0, 0, false
+	}
+	anchorAt, valid := ParseHHMM(s.LightsOnAt)
+	if !valid {
+		return 0, 0, false
+	}
+	span := int(hours * 60)
+	switch s.Anchor {
+	case AnchorStart:
+		// The stored time is the on-time; nothing to shift.
+	case AnchorEnd:
+		anchorAt -= span
+	default: // AnchorCenter, the default for schedules that name no anchor.
+		anchorAt -= span / 2
+	}
+	onMin = ((anchorAt % 1440) + 1440) % 1440
+	return onMin, (onMin + span) % 1440, true
+}
+
 // DesiredOn reports whether the light should be on at time now for the given
 // stage. ok is false when the schedule is not driving the light (mode off).
 func (s LightSchedule) DesiredOn(stage string, now time.Time) (on bool, ok bool) {
@@ -321,13 +437,12 @@ func (s LightSchedule) DesiredOn(stage string, now time.Time) (on bool, ok bool)
 	if hours >= 24 {
 		return true, true
 	}
-	onAt, valid := parseHHMM(s.LightsOnAt)
+	onAt, _, valid := s.Window(stage)
 	if !valid {
 		return false, false
 	}
 	mins := now.Hour()*60 + now.Minute()
-	span := int(hours * 60)
-	return inWindow(mins, onAt, span), true
+	return inWindow(mins, onAt, int(hours*60)), true
 }
 
 // NextTransition returns the next wall-clock instant at/after now when the
@@ -338,15 +453,10 @@ func (s LightSchedule) NextTransition(stage string, now time.Time) time.Time {
 	if s.Mode == LightScheduleOff {
 		return time.Time{}
 	}
-	hours := s.EffectiveOnHours(stage)
-	if hours <= 0 || hours >= 24 {
+	onAt, offAt, ok := s.Window(stage)
+	if !ok {
 		return time.Time{}
 	}
-	onAt, valid := parseHHMM(s.LightsOnAt)
-	if !valid {
-		return time.Time{}
-	}
-	offAt := (onAt + int(hours*60)) % 1440
 	return nextClockTime(now, onAt, offAt)
 }
 
@@ -360,8 +470,8 @@ func clampHours(h float64) float64 {
 	return h
 }
 
-// parseHHMM parses "HH:MM" into minutes-since-midnight.
-func parseHHMM(s string) (mins int, ok bool) {
+// ParseHHMM parses "HH:MM" into minutes-since-midnight.
+func ParseHHMM(s string) (mins int, ok bool) {
 	var h, m int
 	if _, err := fmt.Sscanf(s, "%d:%d", &h, &m); err != nil {
 		return 0, false
@@ -442,8 +552,12 @@ type Binding struct {
 	StreamURL             string     `json:"streamUrl,omitempty"`
 	CameraType            CameraType `json:"cameraType,omitempty"`
 	CameraCaptureInterval int        `json:"cameraCaptureInterval,omitempty"` // seconds
-	CameraRetentionDays   int        `json:"cameraRetentionDays,omitempty"`
-	CameraStorageMB       int        `json:"cameraStorageMb,omitempty"`
+	// Archive limits. Both are 0 = unlimited. What happens when a limit is
+	// exceeded is decided by CameraRetentionPolicy, which defaults to raising
+	// an alert rather than deleting anything.
+	CameraRetentionDays   int             `json:"cameraRetentionDays,omitempty"`
+	CameraStorageMB       int             `json:"cameraStorageMb,omitempty"`
+	CameraRetentionPolicy RetentionPolicy `json:"cameraRetentionPolicy,omitempty"`
 	// Irrigation only: a passive setup (AutoPot today) has no entity; ReservoirL
 	// is the feed reservoir volume and ValveCount the number of trays/valves.
 	IrrigationType IrrigationType `json:"irrigationType,omitempty"`

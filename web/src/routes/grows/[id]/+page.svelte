@@ -499,7 +499,7 @@
 		{:else if activeTab === 'analytics'}
 			<AnalyticsTab {grow} {analytics} {photos} />
 		{:else if activeTab === 'history'}
-			<HistoryTab {grow} />
+			<HistoryTab {grow} {isAdmin} />
 		{:else if activeTab === 'settings'}
 			<GrowSettingsTab
 				{grow}

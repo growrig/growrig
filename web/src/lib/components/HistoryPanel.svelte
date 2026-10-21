@@ -8,6 +8,7 @@
 	// hold every source in full, since the next-oldest could come from any of
 	// them. Grow, plant and environment all render through this, so their
 	// histories read alike.
+	import { untrack } from 'svelte';
 	import { getHistory } from '$lib/api';
 	import type { HistoryEntry, HistoryKind } from '$lib/types';
 	import { toItems, isLink, groupByDay, type HistoryItem } from '$lib/history';
@@ -25,13 +26,16 @@
 		/** Grow id used to resolve photo thumbnails (a plant's photos live on it). */
 		photoGrowId?: string;
 		empty?: string;
+		/** Let the viewer correct or delete logged care entries. */
+		canEdit?: boolean;
 	}
 	let {
 		growId,
 		plantId,
 		environmentId,
 		photoGrowId,
-		empty = 'Nothing here yet — actions, photos and milestones appear as things happen.'
+		empty = 'Nothing here yet — actions, photos and milestones appear as things happen.',
+		canEdit = false
 	}: Props = $props();
 
 	const PAGE = 50;
@@ -61,18 +65,23 @@
 		entries = offset === 0 ? res.items : [...entries, ...res.items];
 	}
 
-	// Refetch whenever the query changes. Reading only `filter`,
-	// `showAutomation` and the scope — never the state it writes — keeps this
-	// from re-triggering itself.
+	// Everything the query depends on, flattened to a string. Scope props arrive
+	// as getters over the caller's own reactive state — `environmentId={env.id}`
+	// reads a fresh `env` object on every live snapshot — so an effect that read
+	// them directly would refetch on each snapshot and blank the list behind the
+	// loading state. A derived string only invalidates when a value truly
+	// changes.
+	const queryKey = $derived(
+		[growId ?? '', plantId ?? '', environmentId ?? '', filter, showAutomation].join('|')
+	);
+
+	// Refetch whenever the query changes. The load itself runs untracked so it
+	// neither re-reads the scope props nor re-triggers on the state it writes.
 	$effect(() => {
-		filter;
-		showAutomation;
-		growId;
-		plantId;
-		environmentId;
+		queryKey;
 		loading = true;
 		err = '';
-		load(0)
+		untrack(() => load(0))
 			.catch((e) => (err = e instanceof Error ? e.message : 'Failed to load history'))
 			.finally(() => (loading = false));
 	});
@@ -236,4 +245,15 @@
 	</div>
 {/if}
 
-<HistoryDetailModal bind:open={detailOpen} item={selected} growId={photoScope} />
+<HistoryDetailModal
+	bind:open={detailOpen}
+	item={selected}
+	growId={photoScope}
+	{canEdit}
+	onChanged={() => {
+		// The edited entry may have moved day or vanished, so reload the page
+		// of results rather than patching it in place.
+		seen = new Set();
+		load(0).catch(() => {});
+	}}
+/>

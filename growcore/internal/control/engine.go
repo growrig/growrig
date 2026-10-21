@@ -331,7 +331,7 @@ func (e *Engine) step(dt time.Duration) error {
 				// The photoperiod schedule drives the box's primary light only.
 				sched := scheduleByEnv[env.ID]
 				if b.Primary && entity != "" && sched.Mode != domain.LightScheduleOff && sched.Mode != "" {
-					stage := controlStage(growByID, env)
+					stage := controlStage(growByID, unitByID, placements, env)
 					if desired, ok := sched.DesiredOn(stage, now); ok && !e.overrideActive(env.ID, now) {
 						changed := e.driveLight(env, b, entity, desired, on, known)
 						if changed || !known {
@@ -369,15 +369,13 @@ func (e *Engine) step(dt time.Duration) error {
 			}
 		}
 
-		if env.ControlGrowID != "" {
-			if g, ok := growByID[env.ControlGrowID]; ok {
-				view.Grow = &domain.GrowSummary{
-					ID: g.ID, Name: g.Name, Species: g.Species,
-					Stage:      g.Stage,
-					StageDays:  domain.DaysSince(g.StageStarted, now),
-					TotalDays:  domain.DaysSince(g.StartedAt, now),
-					PlantCount: plantCountByGrow[g.ID],
-				}
+		if g, ok := domain.ResolveControlGrow(env, growByID, unitByID, placements); ok {
+			view.Grow = &domain.GrowSummary{
+				ID: g.ID, Name: g.Name, Species: g.Species,
+				Stage:      g.Stage,
+				StageDays:  domain.DaysSince(g.StageStarted, now),
+				TotalDays:  domain.DaysSince(g.StartedAt, now),
+				PlantCount: plantCountByGrow[g.ID],
 			}
 		}
 
@@ -572,14 +570,7 @@ func (e *Engine) NoteManualLightSwitch(envID string) {
 	if err != nil || sched.Mode == domain.LightScheduleOff {
 		return
 	}
-	stage := ""
-	if envs, err := e.store.Environments(); err == nil {
-		if env := findEnv(envs, envID); env != nil && env.ControlGrowID != "" {
-			if g, ok, _ := e.store.Grow(env.ControlGrowID); ok {
-				stage = g.Stage
-			}
-		}
-	}
+	stage := e.currentControlStage(envID)
 	now := time.Now()
 	until := sched.NextTransition(stage, now)
 	if until.IsZero() {
@@ -591,14 +582,46 @@ func (e *Engine) NoteManualLightSwitch(envID string) {
 	e.schedMu.Unlock()
 }
 
-// controlStage resolves the stage that drives an environment's light schedule:
-// the current stage of its nominated control grow, or "" when none is set (in
-// which case the schedule falls back to default photoperiod hours).
-func controlStage(grows map[string]domain.Grow, env domain.Environment) string {
-	if env.ControlGrowID == "" {
+// currentControlStage loads what controlStage needs from the store, for
+// callers outside the control loop. Any load failure yields "".
+func (e *Engine) currentControlStage(envID string) string {
+	envs, err := e.store.Environments()
+	if err != nil {
 		return ""
 	}
-	if g, ok := grows[env.ControlGrowID]; ok {
+	env := findEnv(envs, envID)
+	if env == nil {
+		return ""
+	}
+	grows, err := e.store.Grows()
+	if err != nil {
+		return ""
+	}
+	units, err := e.store.PlantUnitsAll()
+	if err != nil {
+		return ""
+	}
+	placements, err := e.store.CurrentPlacements()
+	if err != nil {
+		return ""
+	}
+	growByID := map[string]domain.Grow{}
+	for _, g := range grows {
+		growByID[g.ID] = g
+	}
+	unitByID := map[string]domain.PlantUnit{}
+	for _, u := range units {
+		unitByID[u.ID] = u
+	}
+	return controlStage(growByID, unitByID, placements, *env)
+}
+
+// controlStage resolves the stage that drives an environment's light schedule:
+// the current stage of its control grow (nominated, or the only grow growing
+// there), or "" when there is none (in which case the schedule falls back to
+// default photoperiod hours).
+func controlStage(grows map[string]domain.Grow, units map[string]domain.PlantUnit, placements []domain.PlantPlacement, env domain.Environment) string {
+	if g, ok := domain.ResolveControlGrow(env, grows, units, placements); ok {
 		return g.Stage
 	}
 	return ""

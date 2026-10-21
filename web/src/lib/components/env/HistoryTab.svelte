@@ -9,8 +9,9 @@
 
 	interface Props {
 		environmentId: string;
+		isAdmin?: boolean;
 	}
-	let { environmentId }: Props = $props();
+	let { environmentId, isAdmin = false }: Props = $props();
 </script>
 
-<HistoryPanel {environmentId} empty="Nothing recorded for this environment yet." />
+<HistoryPanel {environmentId} canEdit={isAdmin} empty="Nothing recorded for this environment yet." />

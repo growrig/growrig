@@ -72,28 +72,29 @@ type deviceDocument struct {
 }
 
 type capabilityDocument struct {
-	ID                    string             `yaml:"id"`
-	Kind                  domain.BindingKind `yaml:"kind"`
-	Name                  string             `yaml:"name"`
-	Entity                string             `yaml:"entity,omitempty"`
-	Measurement           domain.Measurement `yaml:"measurement,omitempty"`
-	Role                  domain.Role        `yaml:"role,omitempty"`
-	RPMEntity             string             `yaml:"rpmEntity,omitempty"`
-	FanType               string             `yaml:"fanType,omitempty"`
-	SizeMM                int                `yaml:"sizeMm,omitempty"`
-	MaxRPM                int                `yaml:"maxRpm,omitempty"`
-	AirflowCFM            float64            `yaml:"airflowCfm,omitempty"`
-	StaticPressureMMH2O   float64            `yaml:"staticPressureMmH2O,omitempty"`
-	StartingVoltage       float64            `yaml:"startingVoltage,omitempty"`
-	DuctSizeInches        float64            `yaml:"ductSizeInches,omitempty"`
-	NoiseDBA              float64            `yaml:"noiseDba,omitempty"`
-	Wattage               float64            `yaml:"wattage,omitempty"`
-	Primary               bool               `yaml:"primary,omitempty"`
-	StreamURL             string             `yaml:"streamUrl,omitempty"`
-	CameraType            domain.CameraType  `yaml:"cameraType,omitempty"`
-	CameraCaptureInterval int                `yaml:"cameraCaptureInterval,omitempty"`
-	CameraRetentionDays   int                `yaml:"cameraRetentionDays,omitempty"`
-	CameraStorageMB       int                `yaml:"cameraStorageMb,omitempty"`
+	ID                    string                 `yaml:"id"`
+	Kind                  domain.BindingKind     `yaml:"kind"`
+	Name                  string                 `yaml:"name"`
+	Entity                string                 `yaml:"entity,omitempty"`
+	Measurement           domain.Measurement     `yaml:"measurement,omitempty"`
+	Role                  domain.Role            `yaml:"role,omitempty"`
+	RPMEntity             string                 `yaml:"rpmEntity,omitempty"`
+	FanType               string                 `yaml:"fanType,omitempty"`
+	SizeMM                int                    `yaml:"sizeMm,omitempty"`
+	MaxRPM                int                    `yaml:"maxRpm,omitempty"`
+	AirflowCFM            float64                `yaml:"airflowCfm,omitempty"`
+	StaticPressureMMH2O   float64                `yaml:"staticPressureMmH2O,omitempty"`
+	StartingVoltage       float64                `yaml:"startingVoltage,omitempty"`
+	DuctSizeInches        float64                `yaml:"ductSizeInches,omitempty"`
+	NoiseDBA              float64                `yaml:"noiseDba,omitempty"`
+	Wattage               float64                `yaml:"wattage,omitempty"`
+	Primary               bool                   `yaml:"primary,omitempty"`
+	StreamURL             string                 `yaml:"streamUrl,omitempty"`
+	CameraType            domain.CameraType      `yaml:"cameraType,omitempty"`
+	CameraCaptureInterval int                    `yaml:"cameraCaptureInterval,omitempty"`
+	CameraRetentionDays   int                    `yaml:"cameraRetentionDays,omitempty"`
+	CameraStorageMB       int                    `yaml:"cameraStorageMb,omitempty"`
+	CameraRetentionPolicy domain.RetentionPolicy `yaml:"cameraRetentionPolicy,omitempty"`
 }
 
 func (s *Store) syncYAMLConfig() error {
@@ -150,7 +151,7 @@ func (s *Store) syncYAMLConfig() error {
 					EnvironmentID: doc.ID, Kind: cap.Kind, Name: cap.Name, Entity: cap.Entity,
 					Measurement: cap.Measurement, Role: cap.Role, RPMEntity: cap.RPMEntity, FanType: cap.FanType, SizeMM: cap.SizeMM, MaxRPM: cap.MaxRPM, AirflowCFM: cap.AirflowCFM, StaticPressureMMH2O: cap.StaticPressureMMH2O, StartingVoltage: cap.StartingVoltage, DuctSizeInches: cap.DuctSizeInches, NoiseDBA: cap.NoiseDBA,
 					Wattage: cap.Wattage, Primary: cap.Primary,
-					StreamURL: cap.StreamURL, CameraType: cap.CameraType, CameraCaptureInterval: cap.CameraCaptureInterval, CameraRetentionDays: cap.CameraRetentionDays, CameraStorageMB: cap.CameraStorageMB,
+					StreamURL: cap.StreamURL, CameraType: cap.CameraType, CameraCaptureInterval: cap.CameraCaptureInterval, CameraRetentionDays: cap.CameraRetentionDays, CameraStorageMB: cap.CameraStorageMB, CameraRetentionPolicy: cap.CameraRetentionPolicy,
 				}
 				if err := s.SaveBinding(b); err != nil {
 					return err
@@ -206,7 +207,7 @@ func (s *Store) writeEnvironmentConfig(envID string) error {
 			ID: b.ID, Kind: b.Kind, Name: b.Name, Entity: b.Entity,
 			Measurement: b.Measurement, Role: b.Role, RPMEntity: b.RPMEntity, FanType: b.FanType, SizeMM: b.SizeMM, MaxRPM: b.MaxRPM, AirflowCFM: b.AirflowCFM, StaticPressureMMH2O: b.StaticPressureMMH2O, StartingVoltage: b.StartingVoltage, DuctSizeInches: b.DuctSizeInches, NoiseDBA: b.NoiseDBA,
 			Wattage: b.Wattage, Primary: b.Primary,
-			StreamURL: b.StreamURL, CameraType: b.CameraType, CameraCaptureInterval: b.CameraCaptureInterval, CameraRetentionDays: b.CameraRetentionDays, CameraStorageMB: b.CameraStorageMB,
+			StreamURL: b.StreamURL, CameraType: b.CameraType, CameraCaptureInterval: b.CameraCaptureInterval, CameraRetentionDays: b.CameraRetentionDays, CameraStorageMB: b.CameraStorageMB, CameraRetentionPolicy: b.CameraRetentionPolicy,
 		})
 	}
 	devices := make([]deviceDocument, 0, len(byDevice))

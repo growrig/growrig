@@ -12,7 +12,7 @@ func at(hhmm string) time.Time {
 }
 
 func TestDesiredOn_PhaseMode(t *testing.T) {
-	s := LightSchedule{Mode: LightSchedulePhase, LightsOnAt: "06:00", StageOnHours: map[string]float64{}}
+	s := LightSchedule{Mode: LightSchedulePhase, LightsOnAt: "06:00", Anchor: AnchorStart, StageOnHours: map[string]float64{}}
 
 	// Vegetative default is 18/6: on 06:00–00:00.
 	cases := []struct {
@@ -47,7 +47,7 @@ func TestDesiredOn_PhaseMode(t *testing.T) {
 
 func TestDesiredOn_WrapMidnight(t *testing.T) {
 	// Lights on at 20:00 for 12h -> on 20:00–08:00, wrapping midnight.
-	s := LightSchedule{Mode: LightScheduleCustom, LightsOnAt: "20:00", OnHours: 12}
+	s := LightSchedule{Mode: LightScheduleCustom, LightsOnAt: "20:00", Anchor: AnchorStart, OnHours: 12}
 	on := []string{"20:00", "23:30", "00:30", "07:59"}
 	off := []string{"08:00", "12:00", "19:59"}
 	for _, hhmm := range on {
@@ -71,7 +71,7 @@ func TestDesiredOn_OffMode(t *testing.T) {
 
 func TestNextTransition(t *testing.T) {
 	// 12/12 from 06:00 -> transitions at 06:00 and 18:00.
-	s := LightSchedule{Mode: LightScheduleCustom, LightsOnAt: "06:00", OnHours: 12}
+	s := LightSchedule{Mode: LightScheduleCustom, LightsOnAt: "06:00", Anchor: AnchorStart, OnHours: 12}
 	if got := s.NextTransition("vegetative", at("10:00")); got.Hour() != 18 {
 		t.Errorf("next transition after 10:00 should be 18:00, got %v", got)
 	}
@@ -92,5 +92,70 @@ func TestEffectiveOnHours_Override(t *testing.T) {
 	}
 	if h := s.EffectiveOnHours("vegetative"); h != 18 {
 		t.Errorf("veg should fall back to default 18: got %v", h)
+	}
+}
+
+func TestWindow_Anchors(t *testing.T) {
+	// The grower's day: 18/6 runs 06:00–00:00 under every anchor below, and
+	// each anchor moves a 12/12 stage differently.
+	cases := []struct {
+		name          string
+		anchor        LightAnchor
+		anchorAt      string
+		wantVegOn     int
+		wantVegOff    int
+		wantFlowerOn  int
+		wantFlowerOff int
+	}{
+		{"start", AnchorStart, "06:00", 6 * 60, 0, 6 * 60, 18 * 60},
+		{"center", AnchorCenter, "15:00", 6 * 60, 0, 9 * 60, 21 * 60},
+		{"end", AnchorEnd, "00:00", 6 * 60, 0, 12 * 60, 0},
+	}
+	for _, c := range cases {
+		s := LightSchedule{Mode: LightSchedulePhase, LightsOnAt: c.anchorAt, Anchor: c.anchor}
+		on, off, ok := s.Window("vegetative")
+		if !ok || on != c.wantVegOn || off != c.wantVegOff {
+			t.Errorf("%s: vegetative window = %d–%d (ok=%v), want %d–%d", c.name, on, off, ok, c.wantVegOn, c.wantVegOff)
+		}
+		on, off, ok = s.Window("flowering")
+		if !ok || on != c.wantFlowerOn || off != c.wantFlowerOff {
+			t.Errorf("%s: flowering window = %d–%d (ok=%v), want %d–%d", c.name, on, off, ok, c.wantFlowerOn, c.wantFlowerOff)
+		}
+	}
+}
+
+func TestDesiredOn_CenterAnchor(t *testing.T) {
+	// 12/12 centred on 15:00 is on 09:00–21:00.
+	s := LightSchedule{Mode: LightSchedulePhase, LightsOnAt: "15:00", Anchor: AnchorCenter}
+	on := []string{"09:00", "15:00", "20:59"}
+	off := []string{"08:59", "21:00", "03:00"}
+	for _, hhmm := range on {
+		if got, _ := s.DesiredOn("flowering", at(hhmm)); !got {
+			t.Errorf("expected light ON at %s", hhmm)
+		}
+	}
+	for _, hhmm := range off {
+		if got, _ := s.DesiredOn("flowering", at(hhmm)); got {
+			t.Errorf("expected light OFF at %s", hhmm)
+		}
+	}
+	// The transition times follow the anchored window, not the anchor time.
+	if got := s.NextTransition("flowering", at("10:00")); got.Hour() != 21 {
+		t.Errorf("next transition after 10:00 should be 21:00, got %v", got)
+	}
+}
+
+func TestWindow_CenterWrapsMidnight(t *testing.T) {
+	// A night-time photoperiod: 12h centred on 03:00 runs 21:00–09:00.
+	s := LightSchedule{Mode: LightScheduleCustom, LightsOnAt: "03:00", Anchor: AnchorCenter, OnHours: 12}
+	on, off, ok := s.Window("flowering")
+	if !ok || on != 21*60 || off != 9*60 {
+		t.Fatalf("window = %d–%d (ok=%v), want 1260–540", on, off, ok)
+	}
+	if got, _ := s.DesiredOn("flowering", at("23:00")); !got {
+		t.Errorf("expected light ON at 23:00")
+	}
+	if got, _ := s.DesiredOn("flowering", at("12:00")); got {
+		t.Errorf("expected light OFF at 12:00")
 	}
 }

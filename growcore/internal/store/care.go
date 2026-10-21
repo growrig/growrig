@@ -338,3 +338,48 @@ func (s *Store) DeleteCareEvent(id string) error {
 	}
 	return tx.Commit()
 }
+
+// UpdateCareEvent rewrites an existing event's editable fields and replaces its
+// applications. Type and GrowID are fixed at creation — changing either makes it
+// a different entry, so that kind of correction is a delete plus a fresh log.
+func (s *Store) UpdateCareEvent(e domain.CareEvent) error {
+	if e.OccurredAt.IsZero() {
+		e.OccurredAt = time.Now()
+	}
+	var doses string
+	if len(e.Doses) > 0 {
+		raw, err := json.Marshal(e.Doses)
+		if err != nil {
+			return err
+		}
+		doses = string(raw)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(
+		`UPDATE care_events SET occurred_at=?, notes=?, recipe_id=?, ph=?, ec=?, runoff_ml=?, runoff_ph=?, doses=?
+		 WHERE id=?`,
+		e.OccurredAt.UnixMilli(), e.Notes, e.RecipeID, e.PH, e.EC, e.RunoffML, e.RunoffPH, doses, e.ID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("care event not found")
+	}
+	if _, err := tx.Exec(`DELETE FROM care_applications WHERE care_event_id=?`, e.ID); err != nil {
+		return err
+	}
+	for _, a := range e.Applications {
+		if _, err := tx.Exec(
+			`INSERT INTO care_applications (id, care_event_id, plant_unit_id, amount_ml, note)
+			 VALUES (?, ?, ?, ?, ?)`,
+			a.ID, e.ID, a.PlantUnitID, a.AmountML, a.Note,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

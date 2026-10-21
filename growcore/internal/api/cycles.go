@@ -83,6 +83,7 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 type scheduleBody struct {
 	Mode         domain.LightScheduleMode `json:"mode"`
 	LightsOnAt   string                   `json:"lightsOnAt"`
+	Anchor       domain.LightAnchor       `json:"anchor"`
 	OnHours      float64                  `json:"onHours"`
 	StageOnHours map[string]float64       `json:"stageOnHours"`
 }
@@ -99,6 +100,13 @@ func (s *Server) putSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	if b.LightsOnAt != "" && !validHHMM(b.LightsOnAt) {
 		writeJSON(w, http.StatusBadRequest, errBody("lightsOnAt must be HH:MM"))
+		return
+	}
+	if b.Anchor == "" {
+		b.Anchor = domain.AnchorCenter
+	}
+	if !validAnchor(b.Anchor) {
+		writeJSON(w, http.StatusBadRequest, errBody("anchor must be center, start or end"))
 		return
 	}
 	envs, err := s.store.Environments()
@@ -119,12 +127,18 @@ func (s *Server) putSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	onAt := strings.TrimSpace(b.LightsOnAt)
 	if onAt == "" {
-		onAt = "06:00"
+		// An unset anchor time means "the usual": a day centred on 15:00, or
+		// the equivalent 06:00 lights-on under a start anchor.
+		onAt = "15:00"
+		if b.Anchor == domain.AnchorStart {
+			onAt = "06:00"
+		}
 	}
 	sched := domain.LightSchedule{
 		EnvironmentID: id,
 		Mode:          b.Mode,
 		LightsOnAt:    onAt,
+		Anchor:        b.Anchor,
 		OnHours:       b.OnHours,
 		StageOnHours:  stageOn,
 	}
@@ -255,6 +269,15 @@ func (s *Server) getLightingDefaults(w http.ResponseWriter, r *http.Request) {
 func validScheduleMode(m domain.LightScheduleMode) bool {
 	for _, x := range domain.AllLightScheduleModes {
 		if x == m {
+			return true
+		}
+	}
+	return false
+}
+
+func validAnchor(a domain.LightAnchor) bool {
+	for _, x := range domain.AllLightAnchors {
+		if x == a {
 			return true
 		}
 	}

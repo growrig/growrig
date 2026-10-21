@@ -188,6 +188,7 @@ type bindingBody struct {
 	CameraCaptureInterval int                `json:"cameraCaptureInterval"`
 	CameraRetentionDays   int                `json:"cameraRetentionDays"`
 	CameraStorageMB       int                `json:"cameraStorageMb"`
+	CameraRetentionPolicy string             `json:"cameraRetentionPolicy"`
 	IrrigationType        string             `json:"irrigationType"`
 	IrrigationMode        string             `json:"irrigationMode"`
 	ReservoirL            float64            `json:"reservoirL"`
@@ -399,17 +400,26 @@ func (s *Server) buildBinding(bindingID string, b bindingBody) (domain.Binding, 
 			binding.CameraCaptureInterval = b.CameraCaptureInterval
 			binding.CameraRetentionDays = b.CameraRetentionDays
 			binding.CameraStorageMB = b.CameraStorageMB
+			binding.CameraRetentionPolicy = domain.RetentionPolicy(b.CameraRetentionPolicy)
 			if binding.CameraCaptureInterval == 0 {
 				binding.CameraCaptureInterval = 60
 			}
-			if binding.CameraRetentionDays == 0 {
-				binding.CameraRetentionDays = 7
+			// Recorded footage is never discarded unless the user opts in, so
+			// both limits default to unlimited and the policy to alerting.
+			if binding.CameraRetentionPolicy == "" {
+				binding.CameraRetentionPolicy = domain.RetentionAlert
 			}
-			if binding.CameraStorageMB == 0 {
-				binding.CameraStorageMB = 5120
+			if binding.CameraRetentionPolicy != domain.RetentionAlert && binding.CameraRetentionPolicy != domain.RetentionDelete {
+				return domain.Binding{}, fmt.Errorf("unknown camera retention policy %q", binding.CameraRetentionPolicy)
 			}
-			if binding.CameraCaptureInterval < 5 || binding.CameraCaptureInterval > 3600 || binding.CameraRetentionDays < 1 || binding.CameraRetentionDays > 365 || binding.CameraStorageMB < 100 || binding.CameraStorageMB > 102400 {
-				return domain.Binding{}, fmt.Errorf("camera archive settings are outside supported ranges")
+			if binding.CameraCaptureInterval < 5 || binding.CameraCaptureInterval > 3600 {
+				return domain.Binding{}, fmt.Errorf("camera capture interval must be between 5 and 3600 seconds")
+			}
+			if binding.CameraRetentionDays < 0 || binding.CameraRetentionDays > 3650 {
+				return domain.Binding{}, fmt.Errorf("camera retention must be between 0 (unlimited) and 3650 days")
+			}
+			if binding.CameraStorageMB < 0 || binding.CameraStorageMB > 1024000 {
+				return domain.Binding{}, fmt.Errorf("camera storage limit must be between 0 (unlimited) and 1024000 MB")
 			}
 			binding.Entity = "" // direct streams do not bind to Home Assistant
 		} else if !strings.HasPrefix(strings.TrimSpace(binding.Entity), "camera.") {

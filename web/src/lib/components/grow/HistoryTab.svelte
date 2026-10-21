@@ -7,11 +7,13 @@
 
 	interface Props {
 		grow: GrowDetail;
+		isAdmin?: boolean;
 	}
-	let { grow }: Props = $props();
+	let { grow, isAdmin = false }: Props = $props();
 </script>
 
 <HistoryPanel
 	growId={grow.id}
+	canEdit={isAdmin}
 	empty="Nothing here yet — care actions, photos and milestones will appear as the grow progresses."
 />

@@ -62,6 +62,9 @@ type CareApplication struct {
 	PlantUnitID string  `json:"plantUnitId"`
 	AmountML    float64 `json:"amountMl,omitempty"`
 	Note        string  `json:"note,omitempty"`
+	// PlantLabel is a display-only convenience filled by the API so clients can
+	// name the plant without a second lookup. It is never persisted.
+	PlantLabel string `json:"plantLabel,omitempty"`
 }
 
 // GrowCareConfig customizes a grow's care actions on top of its species
