@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+	_ "time/tzdata" // Keep IANA timezones available in minimal add-on images.
 
 	"github.com/growrig/growrig/growcore/internal/api"
 	"github.com/growrig/growrig/growcore/internal/camera"
@@ -73,7 +74,6 @@ func main() {
 
 	hub := api.NewHub()
 	engine := control.New(st, adapter, hub.Broadcast)
-	go engine.Run(ctx, cfg.Control.Interval.Std())
 
 	// A single, clean lifecycle marker per boot. The engine stays quiet for its
 	// settle window after start (see control.settleWindow), so a restart shows
@@ -123,6 +123,10 @@ func main() {
 	applyCatalogSources()
 
 	apiServer := api.NewServer(st, engine, adapter, hub, string(cfg.Adapter.Type), static, cameraRecorder, filepath.Join(dataDir, "preferences.yaml"), cfg.GrowsDir(), integrationManager, catalogSources)
+	if err := apiServer.ApplyPreferences(); err != nil {
+		log.Fatalf("load instance preferences: %v", err)
+	}
+	go engine.Run(ctx, cfg.Control.Interval.Std())
 	go apiServer.PollWeather(ctx)
 
 	handler := apiServer.Handler()

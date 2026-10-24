@@ -41,10 +41,29 @@ type Engine struct {
 	// separately by main and bypass this window.
 	startedAt time.Time
 
-	// schedMu guards lightOverrides, which a manual switch (HTTP goroutine) may
-	// write while the control loop reads it.
-	schedMu        sync.Mutex
-	lightOverrides map[string]time.Time // envID -> hold the manual light state until this instant
+	// schedMu guards the schedule timezone and manual light overrides, which
+	// HTTP goroutines may update while the control loop reads them.
+	schedMu          sync.Mutex
+	lightOverrides   map[string]time.Time // envID -> hold the manual light state until this instant
+	scheduleLocation *time.Location
+}
+
+// SetScheduleLocation applies the instance timezone to photoperiods and manual
+// override boundaries, independently of the host's timezone.
+func (e *Engine) SetScheduleLocation(loc *time.Location) {
+	e.schedMu.Lock()
+	e.scheduleLocation = loc
+	e.schedMu.Unlock()
+}
+
+func (e *Engine) scheduleTime(now time.Time) time.Time {
+	e.schedMu.Lock()
+	loc := e.scheduleLocation
+	e.schedMu.Unlock()
+	if loc == nil {
+		loc = time.UTC
+	}
+	return now.In(loc)
 }
 
 func New(st *store.Store, adapter Adapter, onSnapshot func(domain.Snapshot)) *Engine {
@@ -212,7 +231,7 @@ func (e *Engine) step(dt time.Duration) error {
 	}
 
 	// Pass 2: drive controls and assemble the live views.
-	now := time.Now()
+	now := e.scheduleTime(time.Now())
 	// Persist history at most once per persistEvery window (zero lastPersist on
 	// the first step forces an immediate sample).
 	persistTick := now.Sub(e.lastPersist) >= e.persistEvery
@@ -571,7 +590,7 @@ func (e *Engine) NoteManualLightSwitch(envID string) {
 		return
 	}
 	stage := e.currentControlStage(envID)
-	now := time.Now()
+	now := e.scheduleTime(time.Now())
 	until := sched.NextTransition(stage, now)
 	if until.IsZero() {
 		// Always-on / always-off schedule has no boundary; hold for a day.

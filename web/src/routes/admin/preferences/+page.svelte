@@ -82,7 +82,7 @@
 	<div class="rounded-xl border border-rig-800 bg-rig-900/40 p-5 space-y-5">
 		<label class="block">
 			<span class="text-sm font-medium text-rig-200">Timezone</span>
-			<p class="mt-1 text-xs text-rig-500">Used for the instance clock and localized timestamps.</p>
+			<p class="mt-1 text-xs text-rig-500">Used for light schedules, the instance clock, and localized timestamps.</p>
 			<Select
 				class="mt-3"
 				bind:value={timezone}

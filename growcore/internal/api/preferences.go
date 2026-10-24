@@ -20,6 +20,20 @@ type preferences struct {
 
 var preferencesMu sync.Mutex
 
+// ApplyPreferences loads the persisted timezone before the control loop starts.
+func (s *Server) ApplyPreferences() error {
+	p, err := s.readPreferences()
+	if err != nil {
+		return err
+	}
+	loc, err := time.LoadLocation(p.Timezone)
+	if err != nil {
+		return err
+	}
+	s.engine.SetScheduleLocation(loc)
+	return nil
+}
+
 func (s *Server) readPreferences() (preferences, error) {
 	preferencesMu.Lock()
 	defer preferencesMu.Unlock()
@@ -85,7 +99,8 @@ func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	if _, err := time.LoadLocation(body.Timezone); err != nil {
+	loc, err := time.LoadLocation(body.Timezone)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errBody("unknown IANA timezone"))
 		return
 	}
@@ -114,6 +129,7 @@ func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	s.engine.SetScheduleLocation(loc)
 	s.activity("", "", "info", "configuration", fmt.Sprintf("Updated instance preferences (timezone=%s, locale=%s)", body.Timezone, body.Locale))
 	writeJSON(w, http.StatusOK, p)
 }

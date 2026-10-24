@@ -159,3 +159,33 @@ func TestWindow_CenterWrapsMidnight(t *testing.T) {
 		t.Errorf("expected light OFF at 12:00")
 	}
 }
+
+func TestNextTransitionAcrossDaylightSaving(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Prague")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := LightSchedule{Mode: LightSchedulePhase, LightsOnAt: "15:00", Anchor: AnchorCenter}
+	for _, tc := range []struct{ now, next string }{
+		{"2026-10-24 22:00", "2026-10-25 09:00"},
+		{"2026-10-25 08:00", "2026-10-25 09:00"},
+		{"2026-10-25 10:00", "2026-10-25 21:00"},
+		{"2026-03-28 22:00", "2026-03-29 09:00"},
+		{"2026-03-29 08:00", "2026-03-29 09:00"},
+		{"2026-03-29 10:00", "2026-03-29 21:00"},
+	} {
+		t.Run(tc.now, func(t *testing.T) {
+			now, err := time.ParseInLocation("2006-01-02 15:04", tc.now, loc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := time.ParseInLocation("2006-01-02 15:04", tc.next, loc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := s.NextTransition("flowering", now); !got.Equal(want) {
+				t.Fatalf("next transition = %v, want %v", got, want)
+			}
+		})
+	}
+}

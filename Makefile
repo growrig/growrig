@@ -94,7 +94,9 @@ web-deps:
 
 .PHONY: web-build
 web-build: web-deps
-	cd web && npm run build
+	# Empty (not unset) so neither the dev URL exported above nor web/.env.local
+	# leaks into the embedded build: it must call Grow Core same-origin.
+	cd web && VITE_GROWCORE_URL= npm run build
 
 .PHONY: embed
 embed: web-build

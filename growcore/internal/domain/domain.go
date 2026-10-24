@@ -497,12 +497,11 @@ func inWindow(t, start, span int) bool {
 // one of the given minute-of-day marks.
 func nextClockTime(now time.Time, marks ...int) time.Time {
 	var best time.Time
-	nowMins := now.Hour()*60 + now.Minute()
-	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	for _, mark := range marks {
-		cand := midnight.Add(time.Duration(mark) * time.Minute)
-		if mark <= nowMins {
-			cand = cand.Add(24 * time.Hour)
+		// Construct wall-clock times directly: DST days need not last 24 hours.
+		cand := time.Date(now.Year(), now.Month(), now.Day(), mark/60, mark%60, 0, 0, now.Location())
+		if !cand.After(now) {
+			cand = time.Date(now.Year(), now.Month(), now.Day()+1, mark/60, mark%60, 0, 0, now.Location())
 		}
 		if best.IsZero() || cand.Before(best) {
 			best = cand
